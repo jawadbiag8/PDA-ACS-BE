@@ -38,6 +38,13 @@ namespace DAMS.API.Controllers
             return Ok(response);
         }
 
+        [HttpGet("ministrydetails")]
+        public async Task<ActionResult<APIResponse>> GetMinistryDetails([FromQuery] PagedRequest filter)
+        {
+            var response = await _ministryService.GetMinistryDetailsAsync(filter ?? new PagedRequest());
+            return Ok(response);
+        }
+
         [HttpGet("{id}")]
         public async Task<ActionResult<APIResponse>> GetMinistryById(int id)
         {

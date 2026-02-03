@@ -41,6 +41,77 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
+        public async Task<APIResponse> GetMinistryDetailsAsync(PagedRequest filter)
+        {
+            filter ??= new PagedRequest();
+
+            var baseQuery = _context.Ministries
+                .Where(m => m.DeletedAt == null)
+                .AsQueryable();
+
+            // SearchTerm: filter by MinistryName, ContactName, or ContactPhone (substring match)
+            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+            {
+                var term = filter.SearchTerm.Trim();
+                baseQuery = baseQuery.Where(m =>
+                    (m.MinistryName != null && m.MinistryName.Contains(term)) ||
+                    (m.ContactName != null && m.ContactName.Contains(term)) ||
+                    (m.ContactPhone != null && m.ContactPhone.Contains(term)));
+            }
+
+            // SortBy: order ministries by the chosen field
+            var sortByLower = filter.SortBy?.Trim().ToLowerInvariant() ?? "";
+            baseQuery = sortByLower switch
+            {
+                "id" or "ministryid" => filter.SortDescending ? baseQuery.OrderByDescending(m => m.Id) : baseQuery.OrderBy(m => m.Id),
+                "ministryname" => filter.SortDescending ? baseQuery.OrderByDescending(m => m.MinistryName) : baseQuery.OrderBy(m => m.MinistryName),
+                "numberofassets" => filter.SortDescending
+                    ? baseQuery.OrderByDescending(m => m.Assets.Count(a => a.DeletedAt == null))
+                    : baseQuery.OrderBy(m => m.Assets.Count(a => a.DeletedAt == null)),
+                _ => baseQuery.OrderBy(m => m.Id)
+            };
+
+            var totalCount = await baseQuery.CountAsync();
+
+            var ministries = await baseQuery
+                .Include(m => m.Assets)
+                    .ThenInclude(a => a.Incidents)
+                .Include(m => m.Assets)
+                    .ThenInclude(a => a.KPIsResults)
+                .AsSplitQuery()
+                .Skip((filter.PageNumber - 1) * filter.PageSize)
+                .Take(filter.PageSize)
+                .ToListAsync();
+
+            var list = ministries.Select(ministry =>
+            {
+                var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
+                var assetDtos = assets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
+                return new MinistryDetailsDto
+                {
+                    MinistryId = ministry.Id,
+                    MinistryName = ministry.MinistryName,
+                    NumberOfAssets = assetDtos.Count,
+                    Assets = assetDtos
+                };
+            }).ToList();
+
+            var pagedResponse = new PagedResponse<MinistryDetailsDto>
+            {
+                Data = list,
+                TotalCount = totalCount,
+                PageNumber = filter.PageNumber,
+                PageSize = filter.PageSize
+            };
+
+            return new APIResponse
+            {
+                IsSuccessful = true,
+                Message = "Ministry details retrieved successfully",
+                Data = pagedResponse
+            };
+        }
+
         public async Task<APIResponse> GetAllMinistriesAsync(MinistryFilterDto filter)
         {
             var query = _context.Ministries
@@ -350,6 +421,40 @@ namespace DAMS.Infrastructure.Services
         {
             // Allow digits, spaces, dashes, parentheses, plus sign
             return System.Text.RegularExpressions.Regex.IsMatch(phone, @"^[\d\s\-\(\)\+]+$");
+        }
+
+        private static MinistryDetailsAssetDto MapToMinistryDetailsAssetDto(Asset asset)
+        {
+            var incidents = asset.Incidents?.Where(i => i.DeletedAt == null).ToList() ?? new List<Incident>();
+            var openCount = incidents.Count(i => i.StatusId != 12);
+            var closedCount = incidents.Count(i => i.StatusId == 12);
+
+            var currentStatus = "UNKNOWN";
+            var latestHealthKpi = asset.KPIsResults?
+                .Where(k => k.KpiId == 1)
+                .OrderByDescending(k => k.CreatedAt)
+                .FirstOrDefault();
+            if (latestHealthKpi != null)
+                currentStatus = IsAssetUp(latestHealthKpi) ? "UP" : "DOWN";
+
+            return new MinistryDetailsAssetDto
+            {
+                AssetId = asset.Id,
+                AssetName = asset.AssetName,
+                CurrentStatus = currentStatus,
+                OpenIncidentCount = openCount,
+                ClosedIncidentCount = closedCount
+            };
+        }
+
+        private static bool IsAssetUp(KPIsResult kpiResult)
+        {
+            if (string.IsNullOrEmpty(kpiResult.Target))
+                return false;
+            var resultLower = kpiResult.Target.ToLower();
+            if (resultLower == "miss")
+                return false;
+            return true;
         }
 
         private static MinistryDashboardDto MapToMinistryDashboardDto(Ministry ministry)
