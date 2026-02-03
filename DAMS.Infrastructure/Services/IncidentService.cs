@@ -378,6 +378,18 @@ namespace DAMS.Infrastructure.Services
             _context.Incidents.Add(incident);
             await _context.SaveChangesAsync();
 
+            var data = new IncidentComment
+            {
+                IncidentId = incident.Id,
+                Comment = "Incident Created",
+                Status = "OPEN",
+                CreatedBy = createdBy,
+                CreatedAt = DateTime.Now
+            };
+
+            _context.IncidentComments.Add(data);
+            await _context.SaveChangesAsync();
+
             var incidentDto = MapToIncidentDto(incident);
             return new APIResponse
             {

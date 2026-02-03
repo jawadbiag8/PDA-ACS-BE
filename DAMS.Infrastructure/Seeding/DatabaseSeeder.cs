@@ -263,6 +263,13 @@ namespace DAMS.Infrastructure.Seeding
                     Type = "IncidentCreationFrequency",
                     CreatedAt = DateTime.Now,
                     CreatedBy = "NA"
+                },
+                new CommonLookup
+                {
+                    Name = "Unresolved",
+                    Type = "Status",
+                    CreatedAt = DateTime.Now,
+                    CreatedBy = "NA"
                 }
             };
 
