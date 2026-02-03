@@ -32,9 +32,9 @@ namespace DAMS.API.Controllers
         }
 
         [HttpGet("byministry")]
-        public async Task<ActionResult<APIResponse>> GetAssetsByMinistry()
+        public async Task<ActionResult<APIResponse>> GetAssetsByMinistry([FromQuery] string? search = null)
         {
-            var response = await _assetService.GetAssetsByMinistryAsync();
+            var response = await _assetService.GetAssetsByMinistryAsync(search);
             return Ok(response);
         }
 

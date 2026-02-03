@@ -340,10 +340,21 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
-        public async Task<APIResponse> GetAssetsByMinistryAsync()
+        public async Task<APIResponse> GetAssetsByMinistryAsync(string? searchTerm = null)
         {
-            var query = await _context.Ministries
-                .Where(m => m.DeletedAt == null)
+            var query = _context.Ministries
+                .Where(m => m.DeletedAt == null);
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(m =>
+                    (m.MinistryName != null && m.MinistryName.Contains(term)) ||
+                    (m.ContactName != null && m.ContactName.Contains(term)) ||
+                    (m.ContactPhone != null && m.ContactPhone.Contains(term)));
+            }
+
+            var result = await query
                 .Select(m => new
                 {
                     MinistryId = m.Id,
@@ -357,7 +368,7 @@ namespace DAMS.Infrastructure.Services
             {
                 IsSuccessful = true,
                 Message = "Assets by ministry retrieved successfully",
-                Data = query
+                Data = result
             };
         }
 

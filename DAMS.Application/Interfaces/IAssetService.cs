@@ -7,7 +7,7 @@ namespace DAMS.Application.Interfaces
     {
         Task<APIResponse> GetAssetByIdAsync(int id);
         Task<APIResponse> GetAllAssetsAsync(AssetFilterDto filter);
-        Task<APIResponse> GetAssetsByMinistryAsync();
+        Task<APIResponse> GetAssetsByMinistryAsync(string? searchTerm = null);
         Task<APIResponse> GetAssetsByMinistryIdAsync(int ministryId, AssetFilterDto? filter = null);
         Task<APIResponse> GetMinistryAssetsSummaryAsync(int ministryId);
         Task<APIResponse> GetAssetsByDepartmentIdAsync(int departmentId);
