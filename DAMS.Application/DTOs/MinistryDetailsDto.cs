@@ -4,7 +4,9 @@ namespace DAMS.Application.DTOs
     {
         public int MinistryId { get; set; }
         public string MinistryName { get; set; } = string.Empty;
+        public int NumberOfDepartments { get; set; }
         public int NumberOfAssets { get; set; }
+        public int OpenIncidentCount { get; set; }
         public List<MinistryDetailsAssetDto> Assets { get; set; } = new();
     }
 

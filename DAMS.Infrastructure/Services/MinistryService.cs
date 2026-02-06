@@ -74,6 +74,7 @@ namespace DAMS.Infrastructure.Services
             var totalCount = await baseQuery.CountAsync();
 
             var ministries = await baseQuery
+                .Include(m => m.Departments)
                 .Include(m => m.Assets)
                     .ThenInclude(a => a.Incidents)
                 .Include(m => m.Assets)
@@ -87,11 +88,17 @@ namespace DAMS.Infrastructure.Services
             {
                 var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
                 var assetDtos = assets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
+                var departmentCount = ministry.Departments?.Count(d => d.DeletedAt == null) ?? 0;
+                var openIncidentCount = assets
+                    .SelectMany(a => a.Incidents ?? new List<Incident>())
+                    .Count(i => i.DeletedAt == null && i.StatusId != 12);
                 return new MinistryDetailsDto
                 {
                     MinistryId = ministry.Id,
                     MinistryName = ministry.MinistryName,
+                    NumberOfDepartments = departmentCount,
                     NumberOfAssets = assetDtos.Count,
+                    OpenIncidentCount = openIncidentCount,
                     Assets = assetDtos
                 };
             }).ToList();
