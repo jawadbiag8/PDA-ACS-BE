@@ -35,12 +35,15 @@ namespace DAMS.Infrastructure.Services
                 };
             }
 
+            var kpiDetails = await GetKpiDetailsForIncidentAsync(incident);
             var incidentDto = MapToIncidentDto(incident);
+
             return new APIResponse
             {
                 IsSuccessful = true,
                 Message = "Incident retrieved successfully",
-                Data = incidentDto
+                Data = incidentDto,
+                KpiDetails = kpiDetails
             };
         }
 
@@ -548,6 +551,97 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
+        /// <summary>Loads last 3 KPI history rows (CreatedAt &lt;= incident.CreatedAt, Target=miss) and returns KpiDetails for auto incidents; null otherwise. Incident must have Asset and KpisLov loaded.</summary>
+        private async Task<IncidentKpiDetailsDto?> GetKpiDetailsForIncidentAsync(Incident incident)
+        {
+            if (!string.Equals(incident.Type, "auto", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var historyRaw = await _context.KPIsResultHistories
+                .Where(k => k.AssetId == incident.AssetId && k.KpiId == incident.KpiId && k.CreatedAt <= incident.CreatedAt && string.Equals(k.Target, "miss", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(k => k.CreatedAt)
+                .Take(3)
+                .Select(k => new { k.CreatedAt, k.Target, k.Result })
+                .ToListAsync();
+
+            var kpiHistory = historyRaw.Select(k =>
+            {
+                var (targetValue, currentValue) = GetKpiTargetAndCurrentDisplays(
+                    incident.KpiId,
+                    incident.Asset,
+                    incident.KpisLov,
+                    k.Target,
+                    k.Result);
+                return new IncidentKpiHistoryEntryDto
+                {
+                    FailedAt = k.CreatedAt,
+                    TargetValue = targetValue,
+                    CurrentValue = currentValue
+                };
+            }).ToList();
+
+            return new IncidentKpiDetailsDto
+            {
+                KpiName = incident.KpisLov?.KpiName ?? string.Empty,
+                History = kpiHistory
+            };
+        }
+
+        private static readonly HashSet<int> CalculationKpiIds = new() { 6, 7, 8, 15, 16, 17, 18, 23 };
+
+        /// <summary>Static KPIs: fixed strings + historyTarget (miss = failure). Calculation KPIs: target from CitizenImpactLevel + KpisLov, current from historyResult. KpiId selects which KpisLov/asset we use.</summary>
+        private static (string TargetValue, string CurrentValue) GetKpiTargetAndCurrentDisplays(
+            int kpiId,
+            Asset? asset,
+            KpisLov? kpisLov,
+            string? historyTarget,
+            string? historyResult)
+        {
+            bool isFailure = string.Equals(historyTarget, "miss", StringComparison.OrdinalIgnoreCase);
+
+            switch (kpiId)
+            {
+                case 1: return ("Up", isFailure ? "Down" : "Up");
+                case 2: return ("No DNS failure", isFailure ? "DNS failed" : "No DNS failure");
+                case 3: return ("No hosting outage", isFailure ? "Hosting outage detected" : "No hosting outage");
+                case 4: return ("No partial outage", isFailure ? "Partial outage detected" : "No partial outage");
+                case 5: return ("No flapping", isFailure ? "Flapping detected" : "No flapping");
+                case 9: return ("Using HTTPS", isFailure ? "Not using HTTPS" : "Using HTTPS");
+                case 10: return ("Valid certificate", isFailure ? "Expired/Missing certificate" : "Valid certificate");
+                case 11: return ("No warnings", isFailure ? "Warnings detected" : "No warnings");
+                case 12: return ("No warnings", isFailure ? "Warnings detected" : "No warnings");
+                case 13: return ("No suspicious redirects", isFailure ? "Suspicious redirects detected" : "No suspicious redirects");
+                case 14: return ("Available", isFailure ? "Not available" : "Available");
+                case 19: return ("Successful", isFailure ? "Failed" : "Successful");
+                case 20: return ("Working", isFailure ? "Broken" : "Working");
+                case 21: return ("Working", isFailure ? "Broken" : "Working");
+                case 22: return ("Available", isFailure ? "Not available" : "Available");
+                case 24: return ("No circular navigation", isFailure ? "Circular navigation detected" : "No circular navigation");
+
+                default:
+                    if (CalculationKpiIds.Contains(kpiId))
+                    {
+                        var targetStr = GetKpiTargetFromImpactLevel(asset, kpisLov);
+                        var currentStr = historyResult ?? string.Empty;
+                        return (targetStr, currentStr);
+                    }
+                    return (string.Empty, string.Empty);
+            }
+        }
+
+        private static string GetKpiTargetFromImpactLevel(Asset? asset, KpisLov? kpisLov)
+        {
+            if (kpisLov == null) return string.Empty;
+            var levelId = asset?.CitizenImpactLevelId ?? 0;
+            return levelId switch
+            {
+                1 => kpisLov.TargetHigh ?? string.Empty,
+                2 => kpisLov.TargetMedium ?? string.Empty,
+                3 => kpisLov.TargetLow ?? string.Empty,
+                _ => string.Empty
+            };
+        }
+
         private static IncidentDashboardDto MapToIncidentDashboardDto(Incident incident)
         {
             var dashboardDto = new IncidentDashboardDto
@@ -849,11 +943,14 @@ namespace DAMS.Infrastructure.Services
                 Comments = comments
             };
 
+            var kpiDetails = await GetKpiDetailsForIncidentAsync(incident);
+
             return new APIResponse
             {
                 IsSuccessful = true,
                 Message = "Incident details retrieved successfully",
-                Data = detailsDto
+                Data = detailsDto,
+                KpiDetails = kpiDetails
             };
         }
 

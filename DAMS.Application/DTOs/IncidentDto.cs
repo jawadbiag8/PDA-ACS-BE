@@ -37,4 +37,17 @@ namespace DAMS.Application.DTOs
         public int? StatusId { get; set; }
         public string? AssignedTo { get; set; }
     }
+
+    public class IncidentKpiDetailsDto
+    {
+        public string KpiName { get; set; } = string.Empty;
+        public List<IncidentKpiHistoryEntryDto> History { get; set; } = new();
+    }
+
+    public class IncidentKpiHistoryEntryDto
+    {
+        public DateTime FailedAt { get; set; }
+        public string? TargetValue { get; set; }
+        public string? CurrentValue { get; set; }
+    }
 }

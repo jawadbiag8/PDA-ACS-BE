@@ -41,9 +41,10 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
-        public async Task<APIResponse> GetMinistryDetailsAsync(PagedRequest filter)
+        public async Task<APIResponse> GetMinistryDetailsAsync(PagedRequest filter, string? statusFilter = "ALL")
         {
             filter ??= new PagedRequest();
+            var statusFilterUpper = statusFilter?.Trim().ToUpperInvariant() ?? "ALL";
 
             var baseQuery = _context.Ministries
                 .Where(m => m.DeletedAt == null)
@@ -71,37 +72,85 @@ namespace DAMS.Infrastructure.Services
                 _ => baseQuery.OrderBy(m => m.Id)
             };
 
-            var totalCount = await baseQuery.CountAsync();
+            List<MinistryDetailsDto> list;
+            int totalCount;
 
-            var ministries = await baseQuery
-                .Include(m => m.Departments)
-                .Include(m => m.Assets)
-                    .ThenInclude(a => a.Incidents)
-                .Include(m => m.Assets)
-                    .ThenInclude(a => a.KPIsResults)
-                .AsSplitQuery()
-                .Skip((filter.PageNumber - 1) * filter.PageSize)
-                .Take(filter.PageSize)
-                .ToListAsync();
-
-            var list = ministries.Select(ministry =>
+            if (statusFilterUpper == "UP" || statusFilterUpper == "DOWN")
             {
-                var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
-                var assetDtos = assets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
-                var departmentCount = ministry.Departments?.Count(d => d.DeletedAt == null) ?? 0;
-                var openIncidentCount = assets
-                    .SelectMany(a => a.Incidents ?? new List<Incident>())
-                    .Count(i => i.DeletedAt == null && i.StatusId != 12);
-                return new MinistryDetailsDto
+                // Load all matching ministries (no pagination yet), then filter to those with at least one UP/DOWN asset, then paginate in memory so totalCount matches returned set
+                var allMinistries = await baseQuery
+                    .Include(m => m.Departments)
+                    .Include(m => m.Assets)
+                        .ThenInclude(a => a.Incidents)
+                    .Include(m => m.Assets)
+                        .ThenInclude(a => a.KPIsResults)
+                    .AsSplitQuery()
+                    .ToListAsync();
+
+                var fullList = allMinistries.Select(ministry =>
                 {
-                    MinistryId = ministry.Id,
-                    MinistryName = ministry.MinistryName,
-                    NumberOfDepartments = departmentCount,
-                    NumberOfAssets = assetDtos.Count,
-                    OpenIncidentCount = openIncidentCount,
-                    Assets = assetDtos
-                };
-            }).ToList();
+                    var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
+                    var assetDtos = assets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
+                    if (statusFilterUpper == "UP")
+                        assetDtos = assetDtos.Where(a => string.Equals(a.CurrentStatus, "UP", StringComparison.OrdinalIgnoreCase)).ToList();
+                    else
+                        assetDtos = assetDtos.Where(a => string.Equals(a.CurrentStatus, "DOWN", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var departmentCount = ministry.Departments?.Count(d => d.DeletedAt == null) ?? 0;
+                    var openIncidentCount = assets
+                        .SelectMany(a => a.Incidents ?? new List<Incident>())
+                        .Count(i => i.DeletedAt == null && i.StatusId != 12);
+                    return new MinistryDetailsDto
+                    {
+                        MinistryId = ministry.Id,
+                        MinistryName = ministry.MinistryName,
+                        NumberOfDepartments = departmentCount,
+                        NumberOfAssets = assetDtos.Count,
+                        OpenIncidentCount = openIncidentCount,
+                        Assets = assetDtos
+                    };
+                }).Where(m => m.Assets.Count > 0).ToList();
+
+                totalCount = fullList.Count;
+                list = fullList
+                    .Skip((filter.PageNumber - 1) * filter.PageSize)
+                    .Take(filter.PageSize)
+                    .ToList();
+            }
+            else
+            {
+                // status=ALL: totalCount = all ministries matching search; paginate at DB
+                totalCount = await baseQuery.CountAsync();
+
+                var ministries = await baseQuery
+                    .Include(m => m.Departments)
+                    .Include(m => m.Assets)
+                        .ThenInclude(a => a.Incidents)
+                    .Include(m => m.Assets)
+                        .ThenInclude(a => a.KPIsResults)
+                    .AsSplitQuery()
+                    .Skip((filter.PageNumber - 1) * filter.PageSize)
+                    .Take(filter.PageSize)
+                    .ToListAsync();
+
+                list = ministries.Select(ministry =>
+                {
+                    var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
+                    var assetDtos = assets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
+                    var departmentCount = ministry.Departments?.Count(d => d.DeletedAt == null) ?? 0;
+                    var openIncidentCount = assets
+                        .SelectMany(a => a.Incidents ?? new List<Incident>())
+                        .Count(i => i.DeletedAt == null && i.StatusId != 12);
+                    return new MinistryDetailsDto
+                    {
+                        MinistryId = ministry.Id,
+                        MinistryName = ministry.MinistryName,
+                        NumberOfDepartments = departmentCount,
+                        NumberOfAssets = assetDtos.Count,
+                        OpenIncidentCount = openIncidentCount,
+                        Assets = assetDtos
+                    };
+                }).ToList();
+            }
 
             var pagedResponse = new PagedResponse<MinistryDetailsDto>
             {
