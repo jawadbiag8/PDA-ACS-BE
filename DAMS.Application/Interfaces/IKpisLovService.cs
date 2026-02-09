@@ -12,9 +12,8 @@ namespace DAMS.Application.Interfaces
         Task<APIResponse> UpdateKpisLovAsync(int id, UpdateKpisLovDto dto, string updatedBy);
         Task<APIResponse> DeleteKpisLovAsync(int id, string deletedBy);
         /// <summary>
-        /// Fetches KPI Lov manual data by calling the given asset's URL (AssetUrl).
-        /// If kpiId is provided, also creates a KPIsResult entry after fetching.
+        /// Calls the manual-check API for the given asset and KPI. Both assetId and kpiId are required.
         /// </summary>
-        Task<APIResponse> GetKpisLovManualDataFromAssetUrlAsync(int assetId, int? kpiId = null);
+        Task<APIResponse> GetKpisLovManualDataFromAssetUrlAsync(int assetId, int kpiId);
     }
 }

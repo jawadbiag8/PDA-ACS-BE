@@ -49,12 +49,15 @@ namespace DAMS.API.Controllers
         }
 
         /// <summary>
-        /// Gets KPI Lov manual data by calling the given asset's URL (AssetUrl).
-        /// If kpiId is provided as query parameter, also creates a KPIsResult entry after fetching.
+        /// Calls the manual-check API for the given asset and KPI. kpiId is required (query parameter).
         /// </summary>
         [HttpGet("manual-from-asset/{assetId}")]
-        public async Task<ActionResult<APIResponse>> GetKpisLovManualDataFromAsset(int assetId, [FromQuery] int? kpiId = null)
+        public async Task<ActionResult<APIResponse>> GetKpisLovManualDataFromAsset(int assetId, [FromQuery] int kpiId)
         {
+            if (kpiId <= 0)
+            {
+                return BadRequest(new APIResponse { IsSuccessful = false, Message = "KpiId is required and must be greater than 0.", Data = null });
+            }
             var response = await _kpisLovService.GetKpisLovManualDataFromAssetUrlAsync(assetId, kpiId);
             if (!response.IsSuccessful)
             {

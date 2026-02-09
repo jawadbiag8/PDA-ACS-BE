@@ -35,15 +35,13 @@ namespace DAMS.Infrastructure.Services
                 };
             }
 
-            var kpiDetails = await GetKpiDetailsForIncidentAsync(incident);
             var incidentDto = MapToIncidentDto(incident);
 
             return new APIResponse
             {
                 IsSuccessful = true,
                 Message = "Incident retrieved successfully",
-                Data = incidentDto,
-                KpiDetails = kpiDetails
+                Data = incidentDto
             };
         }
 
@@ -872,7 +870,7 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
-        public async Task<APIResponse> GetIncidentDetailsAsync(int id)
+        public async Task<IncidentDetailsApiResponse> GetIncidentDetailsAsync(int id)
         {
             var incident = await _context.Incidents
                 .Include(i => i.Asset)
@@ -891,11 +889,12 @@ namespace DAMS.Infrastructure.Services
 
             if (incident == null)
             {
-                return new APIResponse
+                return new IncidentDetailsApiResponse
                 {
                     IsSuccessful = false,
                     Message = "Incident not found.",
-                    Data = null
+                    Data = null,
+                    KpiDetails = null
                 };
             }
 
@@ -945,7 +944,7 @@ namespace DAMS.Infrastructure.Services
 
             var kpiDetails = await GetKpiDetailsForIncidentAsync(incident);
 
-            return new APIResponse
+            return new IncidentDetailsApiResponse
             {
                 IsSuccessful = true,
                 Message = "Incident details retrieved successfully",

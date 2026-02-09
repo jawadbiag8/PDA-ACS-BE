@@ -1,5 +1,5 @@
-using DAMS.Application.Models;
 using DAMS.Application.DTOs;
+using DAMS.Application.Models;
 
 namespace DAMS.Application.Interfaces
 {
@@ -13,6 +13,6 @@ namespace DAMS.Application.Interfaces
         Task<APIResponse> DeleteIncidentAsync(int id, string deletedBy);
         Task<APIResponse> GetIncidentCommentsAsync(int incidentId);
         Task<APIResponse> AddIncidentCommentAsync(CreateIncidentCommentDto dto, string createdBy);
-        Task<APIResponse> GetIncidentDetailsAsync(int id);
+        Task<IncidentDetailsApiResponse> GetIncidentDetailsAsync(int id);
     }
 }

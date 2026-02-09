@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using DAMS.Application.Interfaces;
@@ -6,6 +7,7 @@ using DAMS.Application.DTOs;
 using DAMS.Domain.Entities;
 using DAMS.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace DAMS.Infrastructure.Services
 {
@@ -13,11 +15,13 @@ namespace DAMS.Infrastructure.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _configuration;
 
-        public KpisLovService(ApplicationDbContext context, IHttpClientFactory httpClientFactory)
+        public KpisLovService(ApplicationDbContext context, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
             _context = context;
             _httpClientFactory = httpClientFactory;
+            _configuration = configuration;
         }
 
         public async Task<APIResponse> GetKpisLovsForDropdownAsync()
@@ -296,8 +300,18 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
-        public async Task<APIResponse> GetKpisLovManualDataFromAssetUrlAsync(int assetId, int? kpiId = null)
+        public async Task<APIResponse> GetKpisLovManualDataFromAssetUrlAsync(int assetId, int kpiId)
         {
+            if (kpiId <= 0)
+            {
+                return new APIResponse
+                {
+                    IsSuccessful = false,
+                    Message = "KpiId is required and must be greater than 0.",
+                    Data = null
+                };
+            }
+
             var asset = await _context.Assets
                 .AsNoTracking()
                 .FirstOrDefaultAsync(a => a.Id == assetId && a.DeletedAt == null);
@@ -312,142 +326,76 @@ namespace DAMS.Infrastructure.Services
                 };
             }
 
-            if (string.IsNullOrWhiteSpace(asset.AssetUrl))
+            var kpi = await _context.KpisLovs
+                .AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Id == kpiId && k.DeletedAt == null);
+
+            if (kpi == null)
             {
                 return new APIResponse
                 {
                     IsSuccessful = false,
-                    Message = "Asset has no URL configured.",
+                    Message = "KPI not found.",
                     Data = null
                 };
             }
 
             try
             {
+                var baseUrl = _configuration["KpiManualCheck:BaseUrl"]?.TrimEnd('/') ?? "http://localhost";
+                var port = _configuration["KpiManualCheck:Port"] ?? "8000";
+                var url = $"{baseUrl}:{port}/api/kpi/manual-check";
+
                 var client = _httpClientFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(30);
-                var response = await client.GetAsync(asset.AssetUrl);
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json");
+
+                var body = JsonSerializer.Serialize(new { kpiId, assetId });
+                var content = new StringContent(body, Encoding.UTF8, "application/json");
+                var response = await client.PostAsync(url, content);
+
+                var responseBody = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
                     return new APIResponse
                     {
                         IsSuccessful = false,
-                        Message = $"Request to asset URL failed with status {response.StatusCode}.",
-                        Data = new KpisLovManualDataResponseDto
-                        {
-                            AssetId = asset.Id,
-                            AssetName = asset.AssetName,
-                            AssetUrl = asset.AssetUrl,
-                            ManualData = null,
-                            ContentType = response.Content.Headers.ContentType?.ToString()
-                        }
+                        Message = $"Manual check request failed with status {response.StatusCode}. {responseBody}",
+                        Data = null
                     };
                 }
 
-                var manualData = await response.Content.ReadAsStringAsync();
-                var contentType = response.Content.Headers.ContentType?.ToString();
-
-                KpisLovManualAnalyticsDto? analytics = null;
-                if (!string.IsNullOrWhiteSpace(manualData) &&
-                    (contentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true ||
-                     manualData.TrimStart().StartsWith("{")))
+                object? data = null;
+                if (!string.IsNullOrWhiteSpace(responseBody) && responseBody.TrimStart().StartsWith("{"))
                 {
                     try
                     {
-                        var options = new JsonSerializerOptions
-                        {
-                            PropertyNameCaseInsensitive = true,
-                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                        };
-                        analytics = JsonSerializer.Deserialize<KpisLovManualAnalyticsDto>(manualData, options);
+                        data = JsonSerializer.Deserialize<JsonElement>(responseBody);
                     }
                     catch
                     {
-                        // Keep Analytics null; try HTML parsing below
+                        data = responseBody;
                     }
                 }
-
-                // When response is HTML (e.g. ministry site), try to extract counter/visitor stats
-                if (analytics == null && !string.IsNullOrWhiteSpace(manualData) &&
-                    (contentType?.Contains("html", StringComparison.OrdinalIgnoreCase) == true ||
-                     manualData.TrimStart().StartsWith("<!", StringComparison.OrdinalIgnoreCase)))
+                else
                 {
-                    analytics = TryParseAnalyticsFromHtml(manualData);
-                }
-
-                if (analytics != null)
-                    NormalizeAnalytics(analytics);
-
-                var result = new KpisLovManualDataResponseDto
-                {
-                    AssetId = asset.Id,
-                    AssetName = asset.AssetName,
-                    AssetUrl = asset.AssetUrl,
-                    ManualData = null, // Do not send raw HTML/JSON to front
-                    ContentType = contentType,
-                    Analytics = analytics
-                };
-
-                // If kpiId is provided, save or update KPIsResult entry
-                if (kpiId.HasValue)
-                {
-                    var kpi = await _context.KpisLovs
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(k => k.Id == kpiId.Value && k.DeletedAt == null);
-                    if (kpi != null)
-                    {
-                        var (resultValue, hitOrMiss, metricName) = GetResultValueAndTarget(analytics, kpi);
-                        var detailsJson = analytics != null
-                            ? JsonSerializer.Serialize(analytics, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
-                            : "{}";
-
-                        // Check if record already exists for this AssetId + KpiId
-                        var existingResult = await _context.KPIsResults
-                            .FirstOrDefaultAsync(r => r.AssetId == assetId && r.KpiId == kpiId.Value);
-
-                        if (existingResult != null)
-                        {
-                            // Update existing record
-                            existingResult.Result = $"{resultValue}";
-                            existingResult.Details = detailsJson;
-                            existingResult.Target = hitOrMiss;
-                            existingResult.UpdatedAt = DateTime.Now;
-                        }
-                        else
-                        {
-                            // Create new record
-                            var kpiResult = new KPIsResult
-                            {
-                                AssetId = assetId,
-                                KpiId = kpiId.Value,
-                                Result = $"{resultValue}",
-                                Details = detailsJson,
-                                Target = hitOrMiss,
-                                CreatedAt = DateTime.Now
-                            };
-                            _context.KPIsResults.Add(kpiResult);
-                        }
-                        await _context.SaveChangesAsync();
-                    }
+                    data = responseBody;
                 }
 
                 return new APIResponse
                 {
                     IsSuccessful = true,
-                    Message = kpiId.HasValue 
-                        ? "KPI Lov manual data retrieved and KPIsResult entry saved successfully." 
-                        : "KPI Lov manual data retrieved successfully from asset URL.",
-                    Data = result
+                    Message = "Manual check completed successfully.",
+                    Data = data
                 };
             }
             catch (TaskCanceledException)
-
             {
                 return new APIResponse
                 {
                     IsSuccessful = false,
-                    Message = "Request to asset URL timed out.",
+                    Message = "Manual check request timed out.",
                     Data = null
                 };
             }
@@ -456,7 +404,7 @@ namespace DAMS.Infrastructure.Services
                 return new APIResponse
                 {
                     IsSuccessful = false,
-                    Message = $"Request to asset URL failed: {ex.Message}",
+                    Message = $"Manual check request failed: {ex.Message}",
                     Data = null
                 };
             }
@@ -465,7 +413,7 @@ namespace DAMS.Infrastructure.Services
                 return new APIResponse
                 {
                     IsSuccessful = false,
-                    Message = $"An error occurred while fetching manual data: {ex.Message}",
+                    Message = $"An error occurred while calling manual check: {ex.Message}",
                     Data = null
                 };
             }
