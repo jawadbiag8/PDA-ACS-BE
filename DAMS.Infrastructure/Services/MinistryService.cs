@@ -17,7 +17,8 @@ namespace DAMS.Infrastructure.Services
             _context = context;
         }
 
-        public async Task<APIResponse> GetMinistryByIdAsync(int id)
+        public async Task<APIResponse> 
+            GetMinistryByIdAsync(int id)
         {
             var ministry = await _context.Ministries
                 .FirstOrDefaultAsync(m => m.Id == id && m.DeletedAt == null);
@@ -41,10 +42,99 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
-        public async Task<APIResponse> GetMinistryDetailsAsync(PagedRequest filter, string? statusFilter = "ALL")
+        private static readonly HashSet<string> MetricFilterTypes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "AccessibilityIndex", "AvailabilityIndex", "NavigationIndex", "PerformanceIndex",
+            "SecurityIndex", "UserExperienceIndex", "CitizenHappinessMetric", "OverallComplianceMetric",
+            "DigitalRiskExposureIndex", "CurrentHealth"
+        };
+
+        public async Task<APIResponse> GetMinistryDetailsAsync(PagedRequest filter, string? filterType = null, string? filterValue = null)
         {
             filter ??= new PagedRequest();
-            var statusFilterUpper = statusFilter?.Trim().ToUpperInvariant() ?? "ALL";
+
+            // No filter sent: return all ministries
+            var hasFilterType = !string.IsNullOrWhiteSpace(filterType);
+            if (!hasFilterType)
+            {
+                // No validation; use status param and proceed
+            }
+            else
+            {
+                // Validate filterType
+                var ft = filterType!.Trim();
+                if (!string.Equals(ft, "Status", StringComparison.OrdinalIgnoreCase) && !MetricFilterTypes.Contains(ft))
+                {
+                    var allowedTypes = "Status, " + string.Join(", ", MetricFilterTypes.OrderBy(x => x));
+                    return new APIResponse
+                    {
+                        IsSuccessful = false,
+                        Message = $"Invalid filterType. Allowed values: {allowedTypes}.",
+                        Data = null
+                    };
+                }
+
+                // Validate filterValue when filterType is provided
+                var fv = filterValue?.Trim();
+                if (string.IsNullOrWhiteSpace(fv))
+                {
+                    return new APIResponse
+                    {
+                        IsSuccessful = false,
+                        Message = "filterValue is required when filterType is provided. For Status use: UP, DOWN, ALL. For metrics use: High, Average, Poor, Unknown.",
+                        Data = null
+                    };
+                }
+
+                if (string.Equals(ft, "Status", StringComparison.OrdinalIgnoreCase))
+                {
+                    var statusUpper = fv.ToUpperInvariant();
+                    if (statusUpper != "UP" && statusUpper != "DOWN" && statusUpper != "ALL")
+                    {
+                        return new APIResponse
+                        {
+                            IsSuccessful = false,
+                            Message = "Invalid filterValue for Status. Allowed values: UP, DOWN, ALL.",
+                            Data = null
+                        };
+                    }
+                }
+                else
+                {
+                    var validMetricValues = new[] { "High", "Average", "Poor", "Unknown" };
+                    if (!validMetricValues.Contains(fv, StringComparer.OrdinalIgnoreCase))
+                    {
+                        return new APIResponse
+                        {
+                            IsSuccessful = false,
+                            Message = "Invalid filterValue for metric filter. Allowed values: High, Average, Poor, Unknown.",
+                            Data = null
+                        };
+                    }
+                }
+            }
+
+            // Resolve effective filter: filterType + filterValue only; when not provided, return all
+            string statusFilterUpper;
+            string? metricFilterType = null;
+            string? metricFilterValue = null;
+            if (hasFilterType)
+            {
+                var ft = filterType!.Trim();
+                if (string.Equals(ft, "Status", StringComparison.OrdinalIgnoreCase))
+                    statusFilterUpper = filterValue?.Trim().ToUpperInvariant() ?? "ALL";
+                else if (MetricFilterTypes.Contains(ft))
+                {
+                    statusFilterUpper = "ALL";
+                    // Normalize to canonical property name (e.g. "currenthealth" -> "CurrentHealth") for GetMetricValue switch
+                    metricFilterType = MetricFilterTypes.First(m => string.Equals(m, ft, StringComparison.OrdinalIgnoreCase));
+                    metricFilterValue = filterValue?.Trim();
+                }
+                else
+                    statusFilterUpper = "ALL";
+            }
+            else
+                statusFilterUpper = "ALL";
 
             var baseQuery = _context.Ministries
                 .Where(m => m.DeletedAt == null)
@@ -74,6 +164,79 @@ namespace DAMS.Infrastructure.Services
 
             List<MinistryDetailsDto> list;
             int totalCount;
+
+            if (metricFilterType != null && !string.IsNullOrWhiteSpace(metricFilterValue))
+            {
+                // Metric filter: load ministries with Assets + AssetMetrics, filter by metric range (High/Average/Poor/Unknown), then paginate in memory
+                var rangeKind = metricFilterValue.Equals("High", StringComparison.OrdinalIgnoreCase) ? "High"
+                    : metricFilterValue.Equals("Average", StringComparison.OrdinalIgnoreCase) ? "Average"
+                    : metricFilterValue.Equals("Poor", StringComparison.OrdinalIgnoreCase) ? "Poor"
+                    : metricFilterValue.Equals("Unknown", StringComparison.OrdinalIgnoreCase) ? "Unknown" : null;
+                if (rangeKind == null)
+                {
+                    // Invalid filterValue for metric: treat as no filter
+                    statusFilterUpper = "ALL";
+                    metricFilterType = null;
+                }
+                else
+                {
+                    var allMinistries = await baseQuery
+                        .Include(m => m.Departments)
+                        .Include(m => m.Assets)
+                            .ThenInclude(a => a.Incidents)
+                        .Include(m => m.Assets)
+                            .ThenInclude(a => a.KPIsResults)
+                        .Include(m => m.Assets)
+                            .ThenInclude(a => a.AssetMetrics)
+                        .AsSplitQuery()
+                        .ToListAsync();
+
+                    var fullList = allMinistries.Select(ministry =>
+                    {
+                        var assets = ministry.Assets?.Where(a => a.DeletedAt == null).ToList() ?? new List<Asset>();
+                        var matchingAssets = assets.Where(a =>
+                        {
+                            var latestMetrics = a.AssetMetrics?.OrderByDescending(m => m.CalculatedAt).FirstOrDefault();
+                            if (latestMetrics == null) return false;
+                            var value = GetMetricValue(latestMetrics, metricFilterType);
+                            return MetricValueMatchesRange(value, rangeKind);
+                        }).ToList();
+                        var assetDtos = matchingAssets.Select(a => MapToMinistryDetailsAssetDto(a)).ToList();
+                        var departmentCount = ministry.Departments?.Count(d => d.DeletedAt == null) ?? 0;
+                        var openIncidentCount = assets
+                            .SelectMany(a => a.Incidents ?? new List<Incident>())
+                            .Count(i => i.DeletedAt == null && i.StatusId != 12);
+                        return new MinistryDetailsDto
+                        {
+                            MinistryId = ministry.Id,
+                            MinistryName = ministry.MinistryName,
+                            NumberOfDepartments = departmentCount,
+                            NumberOfAssets = assetDtos.Count,
+                            OpenIncidentCount = openIncidentCount,
+                            Assets = assetDtos
+                        };
+                    }).Where(m => m.Assets.Count > 0).ToList();
+
+                    totalCount = fullList.Count;
+                    list = fullList
+                        .Skip((filter.PageNumber - 1) * filter.PageSize)
+                        .Take(filter.PageSize)
+                        .ToList();
+
+                    return new APIResponse
+                    {
+                        IsSuccessful = true,
+                        Message = "Ministry details retrieved successfully",
+                        Data = new PagedResponse<MinistryDetailsDto>
+                        {
+                            Data = list,
+                            TotalCount = totalCount,
+                            PageNumber = filter.PageNumber,
+                            PageSize = filter.PageSize
+                        }
+                    };
+                }
+            }
 
             if (statusFilterUpper == "UP" || statusFilterUpper == "DOWN")
             {
@@ -511,6 +674,38 @@ namespace DAMS.Infrastructure.Services
             if (resultLower == "miss")
                 return false;
             return true;
+        }
+
+        /// <summary>Gets the numeric value for the given metric column from AssetMetrics (0-100 scale; CurrentHealth as int is cast to double).</summary>
+        private static double GetMetricValue(AssetMetrics m, string metricType)
+        {
+            return metricType switch
+            {
+                nameof(AssetMetrics.AccessibilityIndex) => m.AccessibilityIndex,
+                nameof(AssetMetrics.AvailabilityIndex) => m.AvailabilityIndex,
+                nameof(AssetMetrics.NavigationIndex) => m.NavigationIndex,
+                nameof(AssetMetrics.PerformanceIndex) => m.PerformanceIndex,
+                nameof(AssetMetrics.SecurityIndex) => m.SecurityIndex,
+                nameof(AssetMetrics.UserExperienceIndex) => m.UserExperienceIndex,
+                nameof(AssetMetrics.CitizenHappinessMetric) => m.CitizenHappinessMetric,
+                nameof(AssetMetrics.OverallComplianceMetric) => m.OverallComplianceMetric,
+                nameof(AssetMetrics.DigitalRiskExposureIndex) => m.DigitalRiskExposureIndex,
+                nameof(AssetMetrics.CurrentHealth) => m.CurrentHealth,
+                _ => 0
+            };
+        }
+
+        /// <summary>High = &gt;70, Average = 30-70, Poor = &gt;0 and &lt;30, Unknown = 0.</summary>
+        private static bool MetricValueMatchesRange(double value, string rangeKind)
+        {
+            return rangeKind switch
+            {
+                "High" => value > 70,
+                "Average" => value >= 30 && value <= 70,
+                "Poor" => value > 0 && value < 30,
+                "Unknown" => value == 0,
+                _ => false
+            };
         }
 
         private static MinistryDashboardDto MapToMinistryDashboardDto(Ministry ministry)

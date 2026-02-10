@@ -38,13 +38,18 @@ namespace DAMS.API.Controllers
             return Ok(response);
         }
 
-        /// <summary>Ministry details with optional search, pagination, and status filter. Use searchTerm for real-time/onchange search (call on input change with debounce).</summary>
+        /// <summary>Ministry details with optional search, pagination, and filters. Use filterType + filterValue for one filter at a time (Status: UP/DOWN/ALL; metrics: High/Average/Poor/Unknown). When filterType is not provided, all ministries are returned.</summary>
         [HttpGet("ministrydetails")]
-        public async Task<ActionResult<APIResponse>> GetMinistryDetails([FromQuery] PagedRequest filter, [FromQuery] string? status = "ALL")
+        public async Task<ActionResult<APIResponse>> GetMinistryDetails(
+            [FromQuery] PagedRequest filter,
+            [FromQuery] string? filterType = null,
+            [FromQuery] string? filterValue = null)
         {
             var requestFilter = filter ?? new PagedRequest();
-            var response = await _ministryService.GetMinistryDetailsAsync(requestFilter, status);
-            if (response.IsSuccessful && !string.IsNullOrWhiteSpace(requestFilter.SearchTerm))
+            var response = await _ministryService.GetMinistryDetailsAsync(requestFilter, filterType, filterValue);
+            if (!response.IsSuccessful)
+                return BadRequest(response);
+            if (!string.IsNullOrWhiteSpace(requestFilter.SearchTerm))
                 Response.Headers.CacheControl = "no-store";
             return Ok(response);
         }
