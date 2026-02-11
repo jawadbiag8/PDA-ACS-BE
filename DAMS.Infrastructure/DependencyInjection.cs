@@ -85,6 +85,7 @@ namespace DAMS.Infrastructure
             services.AddScoped<ICommonLookupService, CommonLookupService>();
             services.AddScoped<IKpisLovService, KpisLovService>();
             services.AddScoped<IPMDashboardService, PMDashboardService>();
+            services.AddScoped<IMinistryReportService, MinistryReportService>();
 
             return services;
         }

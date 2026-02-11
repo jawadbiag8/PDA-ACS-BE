@@ -11,6 +11,10 @@
 *.sln.docstates
 *.env
 
+# Local/sensitive config (do not commit credentials)
+appsettings.json
+appsettings.*.json
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

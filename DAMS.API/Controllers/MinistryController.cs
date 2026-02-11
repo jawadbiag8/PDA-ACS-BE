@@ -3,6 +3,7 @@ using DAMS.Application.Models;
 using DAMS.Application.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 
 namespace DAMS.API.Controllers
@@ -13,10 +14,14 @@ namespace DAMS.API.Controllers
     public class MinistryController : ControllerBase
     {
         private readonly IMinistryService _ministryService;
+        private readonly IMinistryReportService _ministryReportService;
+        private readonly IServiceProvider _serviceProvider;
 
-        public MinistryController(IMinistryService ministryService)
+        public MinistryController(IMinistryService ministryService, IMinistryReportService ministryReportService, IServiceProvider serviceProvider)
         {
             _ministryService = ministryService;
+            _ministryReportService = ministryReportService;
+            _serviceProvider = serviceProvider;
         }
 
         private string GetCurrentUsername()
@@ -52,6 +57,34 @@ namespace DAMS.API.Controllers
             if (!string.IsNullOrWhiteSpace(requestFilter.SearchTerm))
                 Response.Headers.CacheControl = "no-store";
             return Ok(response);
+        }
+
+        /// <summary>Generate and download a PDF report for the ministry (ministry summary + assets with compliance score).</summary>
+        [HttpGet("{id}/report")]
+        public async Task<IActionResult> GetMinistryReportPdf(int id)
+        {
+            try
+            {
+                byte[] pdfBytes;
+                string? fileName;
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var reportService = scope.ServiceProvider.GetRequiredService<IMinistryReportService>();
+                    var result = await reportService.GenerateReportPdfAsync(id);
+                    if (!result.Success)
+                        return BadRequest(new APIResponse { IsSuccessful = false, Message = result.Message, Data = null });
+                    var raw = result.PdfBytes ?? Array.Empty<byte>();
+                    pdfBytes = new byte[raw.Length];
+                    Array.Copy(raw, pdfBytes, raw.Length);
+                    fileName = result.FileName ?? "Ministry-Report.pdf";
+                }
+                GC.WaitForPendingFinalizers();
+                return File(pdfBytes, "application/pdf", fileName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new APIResponse { IsSuccessful = false, Message = "Report generation failed: " + ex.Message, Data = null });
+            }
         }
 
         [HttpGet("{id}")]
