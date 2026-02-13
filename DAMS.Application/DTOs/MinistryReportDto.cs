@@ -26,6 +26,8 @@ namespace DAMS.Application.DTOs
     public class MinistryReportIncidentRowDto
     {
         public string KpiName { get; set; } = string.Empty;
+        /// <summary>KPI category from KpisLov.KpiGroup (e.g. Availability &amp; Reliability).</summary>
+        public string KpiGroup { get; set; } = string.Empty;
         /// <summary>Display as "CurrentValue (Target)" from KPIsResult and KpisLov.</summary>
         public string ValueTargetDisplay { get; set; } = string.Empty;
         public DateTime IncidentCreatedAt { get; set; }

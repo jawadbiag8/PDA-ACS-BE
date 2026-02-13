@@ -621,6 +621,8 @@ namespace DAMS.Infrastructure.Services
                     {
                         var targetStr = GetKpiTargetFromImpactLevel(asset, kpisLov);
                         var currentStr = historyResult ?? string.Empty;
+                        targetStr = KpiValueDisplayHelper.FormatCalculatedValueWithUnit(kpiId, targetStr);
+                        currentStr = KpiValueDisplayHelper.FormatCalculatedValueWithUnit(kpiId, currentStr);
                         return (targetStr, currentStr);
                     }
                     return (string.Empty, string.Empty);
@@ -633,9 +635,9 @@ namespace DAMS.Infrastructure.Services
             var levelId = asset?.CitizenImpactLevelId ?? 0;
             return levelId switch
             {
-                1 => kpisLov.TargetHigh ?? string.Empty,
-                2 => kpisLov.TargetMedium ?? string.Empty,
-                3 => kpisLov.TargetLow ?? string.Empty,
+                1 => kpisLov.TargetLow ?? string.Empty,   // LOW - Supporting Services
+                2 => kpisLov.TargetMedium ?? string.Empty, // MEDIUM - Important Services
+                3 => kpisLov.TargetHigh ?? string.Empty,   // HIGH - Critical Public Services
                 _ => string.Empty
             };
         }

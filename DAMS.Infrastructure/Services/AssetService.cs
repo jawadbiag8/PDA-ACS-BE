@@ -275,8 +275,8 @@ namespace DAMS.Infrastructure.Services
                         ? allMatchingAssets.OrderByDescending(a => lastOutageDict != null && lastOutageDict.TryGetValue(a.Id, out var d) ? (DateTime?)d : null).ToList()
                         : allMatchingAssets.OrderBy(a => lastOutageDict != null && lastOutageDict.TryGetValue(a.Id, out var d) ? (DateTime?)d : null).ToList(),
                     "healthstatus" => desc
-                        ? allMatchingAssets.OrderByDescending(a => GetHealthStatus(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList()
-                        : allMatchingAssets.OrderBy(a => GetHealthStatus(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList(),
+                        ? allMatchingAssets.OrderBy(a => GetHealthStatusSortRank(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList() // worst first (POOR, FAIR, HEALTHY)
+                        : allMatchingAssets.OrderByDescending(a => GetHealthStatusSortRank(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList(), // best first
                     "healthindex" => desc
                         ? allMatchingAssets.OrderByDescending(a => metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0).ToList()
                         : allMatchingAssets.OrderBy(a => metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0).ToList(),
@@ -579,8 +579,8 @@ namespace DAMS.Infrastructure.Services
                         ? allMatchingAssets.OrderByDescending(a => lastOutageDict != null && lastOutageDict.TryGetValue(a.Id, out var d) ? (DateTime?)d : null).ToList()
                         : allMatchingAssets.OrderBy(a => lastOutageDict != null && lastOutageDict.TryGetValue(a.Id, out var d) ? (DateTime?)d : null).ToList(),
                     "healthstatus" => desc
-                        ? allMatchingAssets.OrderByDescending(a => GetHealthStatus(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList()
-                        : allMatchingAssets.OrderBy(a => GetHealthStatus(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList(),
+                        ? allMatchingAssets.OrderBy(a => GetHealthStatusSortRank(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList() // worst first (POOR, FAIR, HEALTHY)
+                        : allMatchingAssets.OrderByDescending(a => GetHealthStatusSortRank(metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0)).ToList(), // best first
                     "healthindex" => desc
                         ? allMatchingAssets.OrderByDescending(a => metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0).ToList()
                         : allMatchingAssets.OrderBy(a => metricsDict.GetValueOrDefault(a.Id)?.CurrentHealth ?? 0).ToList(),
@@ -1508,6 +1508,19 @@ namespace DAMS.Infrastructure.Services
             return "POOR"; // LOW
         }
 
+        /// <summary>Sort rank for health status: POOR=0, FAIR=1, HEALTHY=2, UNKNOWN=3. Ascending = worst first; descending = best first.</summary>
+        private static int GetHealthStatusSortRank(int healthIndex)
+        {
+            var status = GetHealthStatus(healthIndex);
+            return status switch
+            {
+                "POOR" => 0,
+                "FAIR" => 1,
+                "HEALTHY" => 2,
+                _ => 3 // UNKNOWN
+            };
+        }
+
         private static string GetPerformanceStatus(int performanceIndex)
         {
             // Use standardized thresholds: <30% = LOW, 30-70% = MEDIUM, >70% = HIGH
@@ -2280,7 +2293,9 @@ namespace DAMS.Infrastructure.Services
                 {
                     var res = R(r).ToLowerInvariant();
                     var tar = T(r).ToLowerInvariant();
-                    return res == "hit" || res == "true" || res == "pass" || tar == "hit" || tar == "pass";
+                    // Target is authoritative for outcome (hit/miss). Do not treat Result "true" as hit when Target is "miss".
+                    if (tar == "miss" || tar == "fail") return false;
+                    return tar == "hit" || tar == "pass" || res == "hit" || res == "pass";
                 });
                 if (total == 0) return "N/A";
                 var pctUnit = GetUnitFromTarget(target) ?? "%";
@@ -2524,7 +2539,8 @@ namespace DAMS.Infrastructure.Services
         }
 
         /// <summary>
-        /// Extracts numeric value from a string, removing units and non-numeric characters
+        /// Extracts numeric value from a string, removing units (%, sec, MB, etc.) for SLA comparison.
+        /// Handles "99.50%", "100%", "3", "0", "5 sec", "10 MB", etc.
         /// </summary>
         private static double? ExtractNumericValue(string value)
         {
@@ -2533,24 +2549,22 @@ namespace DAMS.Infrastructure.Services
 
             var trimmed = value.Trim();
 
-            // First, try direct parsing (handles pure numeric strings like "2.14", "0.53", "0", "58.3%")
-            // This will handle most cases including percentages
+            // Direct parse for pure numbers (e.g. "2.14", "0", "3")
             if (double.TryParse(trimmed, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double directResult))
                 return directResult;
 
-            // Remove common units and whitespace, then try again
+            // Strip units then parse (e.g. "99.50%" -> 99.5, "5 sec" -> 5, "10 MB" -> 10)
             var cleaned = trimmed
+                .Replace("%", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("percent", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("percentage", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("sec", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("seconds", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("s", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("mb", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("megabytes", "", StringComparison.OrdinalIgnoreCase)
-                .Replace("%", "", StringComparison.OrdinalIgnoreCase)
-                .Replace("percent", "", StringComparison.OrdinalIgnoreCase)
-                .Replace("percentage", "", StringComparison.OrdinalIgnoreCase)
                 .Trim();
 
-            // Try to parse the cleaned value
             if (double.TryParse(cleaned, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double result))
                 return result;
 
@@ -2558,8 +2572,12 @@ namespace DAMS.Infrastructure.Services
         }
 
         /// <summary>
-        /// Calculates SLA status based on current value and target per Control Panel spec.
-        /// Higher is better for KPI 1, 2, 15, 23; lower is better for 3-14, 16, 17, 18, 19-22, 24 (KPI 16–18: if Current < Target Compliant). 0=0 is compliant.
+        /// Calculates SLA status for Asset Control Panel: COMPLIANT, NON-COMPLIANT, or UNKNOWN.
+        /// Revalidation rules:
+        /// - Percentage (uptime/availability): KPI 1 (Website Down), 2 (DNS), 15, 23 — target is minimum required; current >= target = COMPLIANT.
+        /// - Count (incidents/outages/misses): KPI 3–14, 16–22, 24 — target is maximum allowed; current <= target = COMPLIANT.
+        /// - Time/size (sec, MB): KPI 6, 7, 8 — lower is better; current <= target = COMPLIANT.
+        /// - When both current and target are 0, treated as COMPLIANT.
         /// </summary>
         private static string CalculateSlaStatus(string currentValue, string target, int kpiId = 0)
         {
@@ -2572,22 +2590,17 @@ namespace DAMS.Infrastructure.Services
             if (!currentNum.HasValue || !targetNum.HasValue)
                 return "UNKNOWN";
 
-            // 0 = 0 still compliant
+            // 0 vs 0: compliant (e.g. zero incidents vs target 0)
             if (currentNum.Value == 0 && targetNum.Value == 0)
                 return "COMPLIANT";
 
-            // Higher is better: KPI 1, 2, 15, 23. Lower is better: KPI 16, 17, 18 (if Current < Target Compliant)
+            // Higher is better: uptime/availability % (KPI 1, 2, 15, 23) — e.g. 100% current vs 99.50% target = COMPLIANT
             var higherIsBetter = new[] { 1, 2, 15, 23 }.Contains(kpiId);
-
             if (higherIsBetter)
-            {
                 return currentNum.Value >= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
-            }
-            else
-            {
-                // Lower is better: 3-14, 19, 20, 21 and time 6, 7, 8
-                return currentNum.Value <= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
-            }
+
+            // Lower is better: incident counts (3–14, 19–22, 24), error % (16–18), time/size (6, 7, 8) — e.g. 0 incidents vs target 3 = COMPLIANT
+            return currentNum.Value <= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
         }
 
         private KpiItemDto MapToKpiItemDtoFromHistory(KpisLov kpi, string? citizenImpactLevelName = null, IEnumerable<dynamic>? allKpiResults = null)
