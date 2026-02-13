@@ -2127,9 +2127,18 @@ namespace DAMS.Infrastructure.Services
                 HighSeverityOpenIncidents = headerOpenCriticalIncidents
             };
 
-            // Get all KPIs for this asset (use KPIsResult to get current data)
+            // Get all KPIs for this asset: History (last 30 days) for hit/miss KPIs, Results for numeric/manual
             var assetIdForKpiQuery = asset.Id;
-            // Load all results first, then group in memory to avoid SQL generation issues
+            var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+
+            // Load KPI history for last 30 days (used for hit/miss KPIs: current value = hit rate % over window)
+            var historyRows = await _context.KPIsResultHistories
+                .AsNoTracking()
+                .Where(h => h.AssetId == assetIdForKpiQuery && h.CreatedAt >= thirtyDaysAgo)
+                .Select(h => new KpiHistoryRowDto { KpiId = h.KpiId, Result = h.Result ?? "", Target = h.Target ?? "", CreatedAt = h.CreatedAt })
+                .ToListAsync();
+
+            // Load KPIsResults (latest per asset; used for numeric and manual KPIs only)
             var allKpisResults = await _context.KPIsResults
                 .AsNoTracking()
                 .Where(k => k.AssetId == assetIdForKpiQuery)
@@ -2142,23 +2151,9 @@ namespace DAMS.Infrastructure.Services
                     k.UpdatedAt
                 })
                 .ToListAsync();
-            
-            // Group by KpiId and get latest result per KPI in memory
-            var recentKpisResults = allKpisResults
-                .GroupBy(k => k.KpiId)
-                .Select(g => g.OrderByDescending(k => k.CreatedAt).First())
-                .Select(d => new KPIsResult
-                {
-                    KpiId = d.KpiId,
-                    Result = d.Result ?? string.Empty,
-                    Target = d.Target ?? string.Empty,
-                    CreatedAt = d.CreatedAt,
-                    AssetId = assetIdForKpiQuery
-                })
-                .ToList();
 
-            // Get latest result per KPI (already grouped in query above)
-            var latestKpisResults = recentKpisResults;
+            // Hit/miss KPIs: use Target column, current value = (hits / total) * 100 over last 30 days
+            var hitMissKpiIds = new HashSet<int> { 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
 
             // Get all KPIs from KpisLov, grouped by category
             var allKpis = await _context.KpisLovs
@@ -2175,10 +2170,15 @@ namespace DAMS.Infrastructure.Services
                     CategoryName = g.Key,
                     Kpis = g.Select(kpi =>
                     {
-                        // Get all results for this KPI to calculate average
-                        var allKpiResults = allKpisResults
-                            .Where(r => r.KpiId == kpi.Id)
-                            .ToList();
+                        if (hitMissKpiIds.Contains(kpi.Id))
+                        {
+                            return MapToKpiItemDtoFromHistoryHitMiss(kpi, asset.CitizenImpactLevel?.Name, historyRows);
+                        }
+                        if (kpi.Id == 15)
+                        {
+                            return MapToKpiItemDtoFromHistoryAvgResult(kpi, asset.CitizenImpactLevel?.Name, historyRows);
+                        }
+                        var allKpiResults = allKpisResults.Where(r => r.KpiId == kpi.Id).ToList();
                         return MapToKpiItemDtoFromHistory(kpi, asset.CitizenImpactLevel?.Name, allKpiResults);
                     }).ToList()
                 })
@@ -2285,6 +2285,11 @@ namespace DAMS.Infrastructure.Services
             static string R(dynamic r) => r.Result?.ToString()?.Trim() ?? "";
             static string T(dynamic r) => r.Target?.ToString()?.Trim() ?? "";
 
+            // Exclude "skipped" from all counts. If all entries are skipped, list is empty → N/A (and caller sets SLA to UNKNOWN).
+            list = list.Where(r => !string.Equals(T(r), "skipped", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (list.Count == 0)
+                return "N/A";
+
             // Percentage: hit/total * 100 (KPI 1, 2, 16, 17, 18) – “All the hit Record/Total Number of records”, value in %
             if (kpiId == 1 || kpiId == 2 || kpiId == 16 || kpiId == 17 || kpiId == 18)
             {
@@ -2366,7 +2371,7 @@ namespace DAMS.Infrastructure.Services
                 return $"{Math.Round(values.Average(), 2)} {unit}";
             }
 
-            // Average in % (KPI 15, 20, 23 only – 16, 17, 18 use hit/total % above)
+            // KPI 15 (WCAG compliance score): AVG(Result) as current value; target <= calculated → COMPLIANT. 20, 23 use history/miss % so only 15 hits this path.
             if (new[] { 15, 20, 23 }.Contains(kpiId))
             {
                 var values = new List<double>();
@@ -2573,11 +2578,10 @@ namespace DAMS.Infrastructure.Services
 
         /// <summary>
         /// Calculates SLA status for Asset Control Panel: COMPLIANT, NON-COMPLIANT, or UNKNOWN.
-        /// Revalidation rules:
-        /// - Percentage (uptime/availability): KPI 1 (Website Down), 2 (DNS), 15, 23 — target is minimum required; current >= target = COMPLIANT.
-        /// - Count (incidents/outages/misses): KPI 3–14, 16–22, 24 — target is maximum allowed; current <= target = COMPLIANT.
-        /// - Time/size (sec, MB): KPI 6, 7, 8 — lower is better; current <= target = COMPLIANT.
-        /// - When both current and target are 0, treated as COMPLIANT.
+        /// SLA rules:
+        /// - Hit/miss (current = hit rate %): higher is better — current >= target % → COMPLIANT (KPI 1, 2, 3, 4, 5, 9–14, 19, 20, 21, 22, 24).
+        /// - Numeric 6, 7, 8 (time/size): lower is better — current <= target → COMPLIANT.
+        /// - Numeric 15, 16, 17, 18, 23 (scores/%): higher is better — current >= target → COMPLIANT.
         /// </summary>
         private static string CalculateSlaStatus(string currentValue, string target, int kpiId = 0)
         {
@@ -2590,56 +2594,154 @@ namespace DAMS.Infrastructure.Services
             if (!currentNum.HasValue || !targetNum.HasValue)
                 return "UNKNOWN";
 
-            // 0 vs 0: compliant (e.g. zero incidents vs target 0)
+            // Target <= calculated → COMPLIANT (higher is better): KPI 1, 2 only (hit rate %). Target >= calculated → COMPLIANT (lower is better): 3–5, 9–14, 16, 17, 19–22, 24 (miss %). Numeric 15: higher better.
+            var higherIsBetter = new[] { 1, 2, 15 }.Contains(kpiId);
+
+            if (higherIsBetter)
+            {
+                // Hit rate % / uptime: 0% is never COMPLIANT (even if target is 0 from KpisLov)
+                if (currentNum.Value == 0)
+                    return "NON-COMPLIANT";
+                return currentNum.Value >= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
+            }
+
+            // Lower is better: 0 vs 0 is COMPLIANT (e.g. zero incidents vs target 0); else current <= target
             if (currentNum.Value == 0 && targetNum.Value == 0)
                 return "COMPLIANT";
-
-            // Higher is better: uptime/availability % (KPI 1, 2, 15, 23) — e.g. 100% current vs 99.50% target = COMPLIANT
-            var higherIsBetter = new[] { 1, 2, 15, 23 }.Contains(kpiId);
-            if (higherIsBetter)
-                return currentNum.Value >= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
-
-            // Lower is better: incident counts (3–14, 19–22, 24), error % (16–18), time/size (6, 7, 8) — e.g. 0 incidents vs target 3 = COMPLIANT
             return currentNum.Value <= targetNum.Value ? "COMPLIANT" : "NON-COMPLIANT";
+        }
+
+        /// <summary>
+        /// KPI 15 (WCAG compliance score): current value = AVG(Result) from KPIsResultHistories (last 30 days). Target &lt;= calculated → COMPLIANT.
+        /// </summary>
+        private KpiItemDto MapToKpiItemDtoFromHistoryAvgResult(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows)
+        {
+            var rows = allHistoryRows.Where(r => r.KpiId == kpi.Id).ToList();
+            var values = new List<double>();
+            foreach (var r in rows)
+            {
+                var parsed = ExtractNumericValue(r.Result ?? "");
+                if (parsed.HasValue) values.Add(parsed.Value);
+            }
+            string currentValue = values.Count > 0 ? $"{Math.Round(values.Average(), 2)}%" : "N/A";
+
+            string target = GetTargetForKpi(kpi, citizenImpactLevelName);
+            target = EnsureTargetHasUnit(kpi.Id, target);
+            var slaStatus = (string.IsNullOrWhiteSpace(currentValue) || currentValue == "N/A")
+                ? "UNKNOWN"
+                : CalculateSlaStatus(currentValue, target, kpi.Id);
+
+            DateTime lastCheckedAt = rows.Count > 0 ? rows.Max(r => r.CreatedAt) : default;
+            var lastChecked = lastCheckedAt != default ? GetTimeAgo(lastCheckedAt) : "N/A";
+
+            var dataSource = string.IsNullOrWhiteSpace(kpi.Manual) || kpi.Manual.Equals("Auto", StringComparison.OrdinalIgnoreCase)
+                ? "Auto"
+                : "Manual";
+
+            return new KpiItemDto
+            {
+                KpiId = kpi.Id,
+                KpiName = kpi.KpiName,
+                Manual = kpi.Manual,
+                Target = target,
+                CurrentValue = currentValue,
+                SlaStatus = slaStatus,
+                LastChecked = lastChecked,
+                DataSource = dataSource
+            };
+        }
+
+        /// <summary>
+        /// Builds KpiItemDto for hit/miss KPIs using KPIsResultHistories (last 30 days).
+        /// Current value = (hits / total records) * 100; Target column used for hit/miss.
+        /// </summary>
+        private KpiItemDto MapToKpiItemDtoFromHistoryHitMiss(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows)
+        {
+            // Exclude "skipped" from all counts: only hit and miss count. If all entries are skipped, total = 0 → N/A and UNKNOWN.
+            var rows = allHistoryRows
+                .Where(r => r.KpiId == kpi.Id)
+                .Where(r => !string.Equals((r.Target ?? "").Trim(), "skipped", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            int total = rows.Count;
+            int hits = 0;
+            if (total > 0)
+            {
+                foreach (var r in rows)
+                {
+                    var tar = (r.Target ?? "").Trim().ToLowerInvariant();
+                    if (tar == "hit" || tar == "pass") hits++;
+                }
+            }
+            int misses = total - hits;
+
+            // KPI 1, 2: hit/total % (target <= calculated → COMPLIANT). All others: misses/total % (target >= calculated → COMPLIANT).
+            string currentValue;
+            if (kpi.Id == 1 || kpi.Id == 2)
+                currentValue = total > 0 ? $"{Math.Round(hits / (double)total * 100.0, 2)}%" : "N/A"; // Hit rate %
+            else
+                currentValue = total > 0 ? $"{Math.Round(misses / (double)total * 100.0, 2)}%" : "N/A"; // Miss %
+
+            string target = GetTargetForKpi(kpi, citizenImpactLevelName);
+            target = EnsureTargetHasUnit(kpi.Id, target);
+            // UNKNOWN only when there is no data (current value N/A). When we have data and 0% (all misses), use normal SLA → NON-COMPLIANT.
+            var slaStatus = total == 0 ? "UNKNOWN" : CalculateSlaStatus(currentValue, target, kpi.Id);
+
+            DateTime lastCheckedAt = default;
+            if (rows.Count > 0)
+            {
+                var maxCreated = rows.Max(r => r.CreatedAt);
+                lastCheckedAt = maxCreated;
+            }
+            var lastChecked = lastCheckedAt != default ? GetTimeAgo(lastCheckedAt) : "N/A";
+
+            var dataSource = string.IsNullOrWhiteSpace(kpi.Manual) || kpi.Manual.Equals("Auto", StringComparison.OrdinalIgnoreCase)
+                ? "Auto"
+                : "Manual";
+
+            return new KpiItemDto
+            {
+                KpiId = kpi.Id,
+                KpiName = kpi.KpiName,
+                Manual = kpi.Manual,
+                Target = target,
+                CurrentValue = currentValue,
+                SlaStatus = slaStatus,
+                LastChecked = lastChecked,
+                DataSource = dataSource
+            };
+        }
+
+        private static string GetTargetForKpi(KpisLov kpi, string? citizenImpactLevelName)
+        {
+            if (!string.IsNullOrWhiteSpace(citizenImpactLevelName))
+            {
+                if (citizenImpactLevelName.Equals("HIGH - Critical Public Services", StringComparison.OrdinalIgnoreCase))
+                    return kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
+                if (citizenImpactLevelName.Equals("MEDIUM - Important Services", StringComparison.OrdinalIgnoreCase))
+                    return kpi.TargetMedium ?? kpi.TargetHigh ?? kpi.TargetLow ?? "N/A";
+                if (citizenImpactLevelName.Equals("LOW - Supporting Services", StringComparison.OrdinalIgnoreCase))
+                    return kpi.TargetLow ?? kpi.TargetMedium ?? kpi.TargetHigh ?? "N/A";
+                return "N/A";
+            }
+            return kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
         }
 
         private KpiItemDto MapToKpiItemDtoFromHistory(KpisLov kpi, string? citizenImpactLevelName = null, IEnumerable<dynamic>? allKpiResults = null)
         {
             // Helper function to get latest result when needed
             dynamic? GetLatestResult() => allKpiResults?.OrderByDescending(r => r.CreatedAt).FirstOrDefault();
-            
-            // Format target based on CitizenImpactLevel
-            string target;
-            if (!string.IsNullOrWhiteSpace(citizenImpactLevelName))
-            {
-                if (citizenImpactLevelName.Equals("HIGH - Critical Public Services", StringComparison.OrdinalIgnoreCase))
-                {
-                    target = kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
-                }
-                else if (citizenImpactLevelName.Equals("MEDIUM - Important Services", StringComparison.OrdinalIgnoreCase))
-                {
-                    target = kpi.TargetMedium ?? kpi.TargetHigh ?? kpi.TargetLow ?? "N/A";
-                }
-                else if (citizenImpactLevelName.Equals("LOW - Supporting Services", StringComparison.OrdinalIgnoreCase))
-                {
-                    target = kpi.TargetLow ?? kpi.TargetMedium ?? kpi.TargetHigh ?? "N/A";
-                }
-                else
-                {
-                    target = "N/A";
-                }
-            }
-            else
-            {
-                target = kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
-            }
+
+            string target = GetTargetForKpi(kpi, citizenImpactLevelName);
 
             // Ensure target has unit suffix when stored as bare number (e.g. "3" -> "3 sec", "95" -> "95%")
             target = EnsureTargetHasUnit(kpi.Id, target);
             
             // Current value: unit taken from target so it matches (e.g. target "5 sec" -> current "3 sec", target "10 MB" -> current "3 MB")
             string currentValue = GetCurrentValueForControlPanel(kpi.Id, allKpiResults, target);
-            var slaStatus = CalculateSlaStatus(currentValue, target, kpi.Id);
+            // Same as hit/miss: UNKNOWN only when current value is N/A (no data); otherwise compute SLA from actual value
+            var slaStatus = (string.IsNullOrWhiteSpace(currentValue) || currentValue == "N/A")
+                ? "UNKNOWN"
+                : CalculateSlaStatus(currentValue, target, kpi.Id);
 
             // Last checked: UpdatedAt from KpiResult, fallback to CreatedAt
             var latestResult = GetLatestResult();
@@ -2668,6 +2770,14 @@ namespace DAMS.Infrastructure.Services
                 LastChecked = lastChecked,
                 DataSource = dataSource
             };
+        }
+
+        private sealed class KpiHistoryRowDto
+        {
+            public int KpiId { get; set; }
+            public string Result { get; set; } = "";
+            public string Target { get; set; } = "";
+            public DateTime CreatedAt { get; set; }
         }
     }
 }
