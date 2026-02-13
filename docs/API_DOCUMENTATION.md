@@ -227,3 +227,17 @@ Exact request/response schemas are available in **Swagger** (`/swagger`) and in 
 - [KPI calculation reference (control panel)](./KPI_CALCULATION_REFERENCE.md)
 - [KPI by ID – how it works](./KPI_BY_ID_HOW_IT_WORKS.md)
 - [Asset control panel compliance calculation](./ASSET_CONTROL_PANEL_COMPLIANCE_CALCULATION.md)
+
+---
+
+## Keeping this doc up to date
+
+When you **add, change, or remove** API endpoints or controllers:
+
+1. Update **docs/API_DOCUMENTATION.md** in the same change:
+   - New controller → add a new section and endpoint table.
+   - New endpoint → add the row (Method, Path, Description) under the right controller.
+   - Changed path/method/auth → update the existing row.
+   - Removed endpoint → remove the row (or controller section if empty).
+2. Keep the **Response format** and **Base URL & Authentication** sections accurate if auth or response shape changes.
+3. Swagger stays in sync from code; this markdown is the human-readable reference—update it so the two stay aligned.

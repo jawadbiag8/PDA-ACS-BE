@@ -1,0 +1,18 @@
+---
+description: Keep API docs in sync when changing controllers or endpoints
+globs: DAMS.API/Controllers/**/*.cs
+alwaysApply: false
+---
+
+# API documentation sync
+
+When you add, change, or remove endpoints or controllers in `DAMS.API/Controllers/`:
+
+- **Update docs/API_DOCUMENTATION.md** in the same change:
+  - New controller → add a section with the controller name, auth requirements, and an endpoint table (Method, Path, Description).
+  - New action → add a row to the correct controller table.
+  - Changed route, HTTP method, or auth → update the existing row.
+  - Removed action/controller → remove the row or section.
+- Keep the "Base URL & Authentication" and "Response format" sections accurate if they change.
+
+This keeps the written API reference aligned with Swagger and the codebase.
