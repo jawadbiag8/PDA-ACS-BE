@@ -10,7 +10,8 @@ API for the Digital Asset Management System (DAMS). Use this document for a quic
 |------|--------|
 | **Base URL** | `http://localhost:5033` (or your deployed host) |
 | **Swagger UI** | `{BaseUrl}/swagger` |
-| **Auth** | JWT Bearer token. Send header: `Authorization: Bearer <token>` |
+| **SignalR hub** | `{BaseUrl}/hubs/data-update` – for real-time data-update notifications (see [SignalR design](./SIGNALR_REALTIME_UPDATES_DESIGN.md)). |
+| **Auth** | JWT Bearer token. Send header: `Authorization: Bearer <token>` (for SignalR, token can be sent as `?access_token=...`) |
 | **Login** | `POST /api/auth/login` (no auth required); use the returned token for all other requests. |
 
 Most endpoints require roles **PDA Analyst** or **PMO Executive**; PM Dashboard endpoints require **PMO Executive** only.

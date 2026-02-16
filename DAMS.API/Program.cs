@@ -53,6 +53,10 @@ builder.Services.AddCors(options =>
 // Add Infrastructure (includes Identity)
 builder.Services.AddInfrastructure(builder.Configuration);
 
+// SignalR for real-time data-update notifications
+builder.Services.AddSignalR();
+builder.Services.AddScoped<DAMS.Application.Interfaces.IDataUpdateNotifier, DAMS.API.Services.DataUpdateNotifier>();
+
 var app = builder.Build();
 
 // Seed database (with error handling for connection issues)
@@ -80,6 +84,10 @@ if (app.Environment.IsDevelopment() || true)//true for dev
 // Skip HTTPS redirection since we're running on HTTP port 5000
 // app.UseHttpsRedirection();
 
+// Serve static files (e.g. SignalR test page at /signalr-test-page.html) - same origin avoids CORS
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Use CORS - must be before UseAuthentication and UseAuthorization
 app.UseCors("AllowAll");
 
@@ -87,6 +95,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<DAMS.API.Hubs.DataUpdateHub>("/hubs/data-update");
 
 //app.Run();
 app.Run();

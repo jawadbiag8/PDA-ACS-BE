@@ -1,3 +1,4 @@
+using DAMS.Application;
 using DAMS.Application.Interfaces;
 using DAMS.Application.Models;
 using DAMS.Application.DTOs;
@@ -13,10 +14,12 @@ namespace DAMS.API.Controllers
     public class AssetController : ControllerBase
     {
         private readonly IAssetService _assetService;
+        private readonly IDataUpdateNotifier _dataUpdateNotifier;
 
-        public AssetController(IAssetService assetService)
+        public AssetController(IAssetService assetService, IDataUpdateNotifier dataUpdateNotifier)
         {
             _assetService = assetService;
+            _dataUpdateNotifier = dataUpdateNotifier;
         }
 
         private string GetCurrentUsername()
@@ -69,6 +72,14 @@ namespace DAMS.API.Controllers
                 return NotFound(response);
             }
             return Ok(response);
+        }
+
+        /// <summary>Notify connected clients that this asset's control panel data (slaStatus, currentValue, lastChecked) has changed. Call this after updating KPIsResult or KPIsResultHistory for the asset so the UI can refetch GET /api/Asset/{id}/controlpanel.</summary>
+        [HttpPost("{id}/controlpanel/notify")]
+        public async Task<ActionResult<APIResponse>> NotifyControlPanelUpdated(int id)
+        {
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
+            return Ok(new APIResponse { IsSuccessful = true, Message = "Control panel update notified.", Data = null });
         }
 
         [HttpGet("ministry/{ministryId}")]

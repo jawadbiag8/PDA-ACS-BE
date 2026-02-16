@@ -1,3 +1,4 @@
+using DAMS.Application;
 using DAMS.Application.Interfaces;
 using DAMS.Application.Models;
 using DAMS.Application.DTOs;
@@ -10,10 +11,12 @@ namespace DAMS.Infrastructure.Services
     public class IncidentService : IIncidentService
     {
         private readonly ApplicationDbContext _context;
+        private readonly IDataUpdateNotifier _dataUpdateNotifier;
 
-        public IncidentService(ApplicationDbContext context)
+        public IncidentService(ApplicationDbContext context, IDataUpdateNotifier dataUpdateNotifier)
         {
             _context = context;
+            _dataUpdateNotifier = dataUpdateNotifier;
         }
 
         public async Task<APIResponse> GetIncidentByIdAsync(int id)
@@ -391,6 +394,9 @@ namespace DAMS.Infrastructure.Services
             _context.IncidentComments.Add(data);
             await _context.SaveChangesAsync();
 
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(incident.Id));
+
             var incidentDto = MapToIncidentDto(incident);
             return new APIResponse
             {
@@ -491,6 +497,9 @@ namespace DAMS.Infrastructure.Services
 
             await _context.SaveChangesAsync();
 
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(id));
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+
             var incidentDto = MapToIncidentDto(incident);
             return new APIResponse
             {
@@ -521,6 +530,9 @@ namespace DAMS.Infrastructure.Services
             incident.UpdatedBy = deletedBy;
 
             await _context.SaveChangesAsync();
+
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(id));
 
             return new APIResponse
             {
@@ -849,6 +861,9 @@ namespace DAMS.Infrastructure.Services
             }
 
             await _context.SaveChangesAsync();
+
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(dto.IncidentId));
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
 
             var commentDto = MapToIncidentCommentDto(comment);
             return new APIResponse

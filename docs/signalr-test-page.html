@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SignalR Data-Update Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 20px auto; padding: 0 16px; }
+    input, button { margin: 4px; }
+    input[type="text"] { width: 280px; }
+    .log { background: #f5f5f5; border: 1px solid #ddd; padding: 12px; margin-top: 12px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    .log .time { color: #666; margin-right: 8px; }
+    .log .topic { color: #0a0; font-weight: bold; }
+    .status { margin: 8px 0; padding: 8px; border-radius: 4px; }
+    .status.connected { background: #d4edda; }
+    .status.disconnected { background: #f8d7da; }
+  </style>
+</head>
+<body>
+  <h1>SignalR data-update test</h1>
+  <p>Connect to the hub, join topics, then trigger changes (e.g. via Swagger). You should see <strong>DataUpdated (topic)</strong> in the log.</p>
+
+  <div>
+    <label>API base URL:</label><br />
+    <input type="text" id="baseUrl" value="https://localhost:7008" placeholder="https://localhost:7008" />
+  </div>
+  <div>
+    <label>JWT (paste token from login):</label><br />
+    <input type="text" id="token" placeholder="Paste JWT here" style="width: 100%;" />
+  </div>
+  <div>
+    <button id="btnLogin">1. Login (get token)</button>
+    <input type="text" id="username" placeholder="Username" />
+    <input type="password" id="password" placeholder="Password" />
+  </div>
+  <div>
+    <button id="btnConnect">2. Connect to hub</button>
+    <button id="btnDisconnect">Disconnect</button>
+  </div>
+  <div>
+    <label>3. Join topic:</label><br />
+    <button data-topic="AdminDashboard.Summary">AdminDashboard.Summary</button>
+    <button data-topic="Incident.816">Incident.816</button>
+    <button data-topic="Asset.241.ControlPanel">Asset.241.ControlPanel</button>
+    <button data-topic="Asset.162.KpisLov">Asset.162.KpisLov</button>
+    <input type="text" id="customTopic" placeholder="Or type topic" />
+    <button id="btnJoinCustom">Join custom</button>
+  </div>
+
+  <div id="status" class="status disconnected">Disconnected</div>
+  <div class="log" id="log"></div>
+
+  <script>
+    const baseUrlEl = document.getElementById('baseUrl');
+    const tokenEl = document.getElementById('token');
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+
+    function log(msg, topic) {
+      const time = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.innerHTML = '<span class="time">' + time + '</span>' + (topic ? '<span class="topic">DataUpdated: ' + topic + '</span>' : msg);
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let connection = null;
+
+    document.getElementById('btnLogin').onclick = async () => {
+      const base = baseUrlEl.value.replace(/\/$/, '');
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      if (!username || !password) { log('Enter username and password'); return; }
+      try {
+        const res = await fetch(base + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (data.data && typeof data.data === 'string') {
+          tokenEl.value = data.data;
+          log('Token received and set.');
+        } else {
+          log('Login failed: ' + (data.message || JSON.stringify(data)));
+        }
+      } catch (e) {
+        log('Login error: ' + e.message);
+      }
+    };
+
+    document.getElementById('btnConnect').onclick = async () => {
+      const base = baseUrlEl.value.replace(/\/$/, '');
+      const token = tokenEl.value.trim();
+      if (!token) { log('Paste JWT or login first.'); return; }
+      if (connection) { await connection.stop(); connection = null; }
+
+      const hubUrl = base + '/hubs/data-update';
+      connection = new signalR.HubConnectionBuilder()
+        .withUrl(hubUrl, { accessTokenFactory: () => token })
+        .withAutomaticReconnect()
+        .build();
+
+      connection.on('DataUpdated', (topic) => {
+        log('', topic);
+      });
+
+      connection.onreconnecting(() => { statusEl.textContent = 'Reconnecting...'; statusEl.className = 'status disconnected'; });
+      connection.onreconnected(() => { statusEl.textContent = 'Connected'; statusEl.className = 'status connected'; });
+      connection.onclose((e) => { statusEl.textContent = 'Disconnected' + (e ? ': ' + e.message : ''); statusEl.className = 'status disconnected'; });
+
+      try {
+        await connection.start();
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'status connected';
+        log('Connected to ' + hubUrl);
+      } catch (err) {
+        log('Connect failed: ' + err.message);
+        statusEl.textContent = 'Connect failed';
+        statusEl.className = 'status disconnected';
+      }
+    };
+
+    document.getElementById('btnDisconnect').onclick = async () => {
+      if (connection) {
+        await connection.stop();
+        connection = null;
+        statusEl.textContent = 'Disconnected';
+        statusEl.className = 'status disconnected';
+        log('Disconnected.');
+      }
+    };
+
+    async function joinTopic(topic) {
+      if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
+        log('Connect first.');
+        return;
+      }
+      try {
+        await connection.invoke('JoinTopic', topic);
+        log('Joined topic: ' + topic);
+      } catch (e) {
+        log('JoinTopic failed: ' + e.message);
+      }
+    }
+
+    document.querySelectorAll('button[data-topic]').forEach(btn => {
+      btn.onclick = () => joinTopic(btn.getAttribute('data-topic'));
+    });
+    document.getElementById('btnJoinCustom').onclick = () => {
+      const t = document.getElementById('customTopic').value.trim();
+      if (t) joinTopic(t);
+    };
+  </script>
+</body>
+</html>

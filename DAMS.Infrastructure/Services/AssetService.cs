@@ -1,3 +1,4 @@
+using DAMS.Application;
 using DAMS.Application.Interfaces;
 using DAMS.Application.Models;
 using DAMS.Application.DTOs;
@@ -16,11 +17,13 @@ namespace DAMS.Infrastructure.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IDataUpdateNotifier _dataUpdateNotifier;
 
-        public AssetService(ApplicationDbContext context, IHttpContextAccessor httpContextAccessor)
+        public AssetService(ApplicationDbContext context, IHttpContextAccessor httpContextAccessor, IDataUpdateNotifier dataUpdateNotifier)
         {
             _context = context;
             _httpContextAccessor = httpContextAccessor;
+            _dataUpdateNotifier = dataUpdateNotifier;
         }
 
         public async Task<APIResponse> GetAssetByIdAsync(int id)
@@ -896,6 +899,8 @@ namespace DAMS.Infrastructure.Services
             _context.Assets.Add(asset);
             await _context.SaveChangesAsync();
 
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+
             var assetDto = MapToAssetDto(asset);
             return new APIResponse
             {
@@ -1078,6 +1083,10 @@ namespace DAMS.Infrastructure.Services
 
             await _context.SaveChangesAsync();
 
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetKpisLov(id));
+
             var assetDto = MapToAssetDto(asset);
             return new APIResponse
             {
@@ -1106,6 +1115,10 @@ namespace DAMS.Infrastructure.Services
             asset.UpdatedBy = deletedBy;
 
             await _context.SaveChangesAsync();
+
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetKpisLov(id));
 
             return new APIResponse
             {
@@ -1217,6 +1230,7 @@ namespace DAMS.Infrastructure.Services
                     await _context.Assets.AddRangeAsync(validAssets);
                     await _context.SaveChangesAsync();
                     response.SuccessfulCount = validAssets.Count;
+                    await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
                 }
 
                 response.Errors = errors;
