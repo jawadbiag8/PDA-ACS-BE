@@ -34,26 +34,44 @@ internal static class KpiValueDisplayHelper
         }
     }
 
-    /// <summary>Appends the correct metric unit for calculated KPIs (same as incident creation): 6,7 = sec; 8 = MB; 15,16,17,18,23 = %.</summary>
+    /// <summary>Appends the correct metric unit for calculated KPIs (same as incident creation): 6,7 = sec; 8 = MB; 15,16,17,18,23 = %.
+    /// Values that are whole numbers (0, 100, 5, etc.) are shown without decimals (e.g. "0%", "100%", "0 MB", "5 sec").</summary>
     public static string FormatCalculatedValueWithUnit(int kpiId, string rawValue)
     {
         if (string.IsNullOrWhiteSpace(rawValue)) return rawValue;
         var v = rawValue.Trim();
+        var valuePart = StripUnit(v);
+        var numStr = NormalizeNumericDisplay(valuePart);
+        // If not numeric (e.g. "N/A"), return original without forcing a unit
+        if (!double.TryParse(valuePart, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _))
+            return v;
         if (kpiId == 6 || kpiId == 7)
-        {
-            if (v.EndsWith("sec", StringComparison.OrdinalIgnoreCase) || v.EndsWith("seconds", StringComparison.OrdinalIgnoreCase)) return v;
-            return v + " sec";
-        }
+            return numStr + " sec";
         if (kpiId == 8)
-        {
-            if (v.EndsWith("MB", StringComparison.OrdinalIgnoreCase)) return v;
-            return v + " MB";
-        }
+            return numStr + " MB";
         if (kpiId == 15 || kpiId == 16 || kpiId == 17 || kpiId == 18 || kpiId == 23)
-        {
-            if (v.EndsWith("%")) return v;
-            return v + "%";
-        }
+            return numStr + "%";
         return v;
+    }
+
+    /// <summary>Strip trailing unit (% or MB or sec) for parsing; returns the rest as-is.</summary>
+    private static string StripUnit(string v)
+    {
+        if (v.EndsWith("%")) return v[..^1].Trim();
+        if (v.EndsWith("MB", StringComparison.OrdinalIgnoreCase)) return v[..^2].Trim();
+        if (v.EndsWith("sec", StringComparison.OrdinalIgnoreCase)) return v[..^3].Trim();
+        if (v.EndsWith("seconds", StringComparison.OrdinalIgnoreCase)) return v[..^7].Trim();
+        return v;
+    }
+
+    /// <summary>Format numeric string for display: whole numbers (0, 100, 5, etc.) without decimals; otherwise two decimals.</summary>
+    private static string NormalizeNumericDisplay(string valuePart)
+    {
+        if (string.IsNullOrWhiteSpace(valuePart)) return valuePart;
+        if (!double.TryParse(valuePart, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var num))
+            return valuePart;
+        if (Math.Abs(num - Math.Round(num)) < 1e-9)
+            return ((int)Math.Round(num)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return num.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
     }
 }

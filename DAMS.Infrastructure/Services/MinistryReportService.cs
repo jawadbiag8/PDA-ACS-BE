@@ -226,7 +226,7 @@ namespace DAMS.Infrastructure.Services
                                     {
                                         dataT.ColumnsDefinition(c => { c.RelativeColumn(3); c.ConstantColumn(120); c.ConstantColumn(115); });
                                         dataT.Cell().BorderBottom(0.5f).BorderLeft(0.5f).BorderRight(0.5f).BorderColor(borderColor).Padding(10).Text(asset.AssetName).SemiBold().FontSize(11).FontColor(textDark);
-                                        dataT.Cell().BorderBottom(0.5f).BorderRight(0.5f).BorderColor(borderColor).Padding(10).AlignCenter().Text(asset.ComplianceScore.ToString("F1")).SemiBold().FontSize(11).FontColor(textDark);
+                                        dataT.Cell().BorderBottom(0.5f).BorderRight(0.5f).BorderColor(borderColor).Padding(10).AlignCenter().Text(FormatComplianceScore(asset.ComplianceScore)).SemiBold().FontSize(11).FontColor(textDark);
                                         dataT.Cell().BorderBottom(0.5f).BorderRight(0.5f).BorderColor(borderColor).Padding(10).AlignCenter().Text(asset.OpenIncidents.ToString()).SemiBold().FontSize(11).FontColor(textDark);
                                     });
 
@@ -307,6 +307,14 @@ namespace DAMS.Infrastructure.Services
             var invalid = Path.GetInvalidFileNameChars();
             var sanitized = string.Join("_", name.Split(invalid, StringSplitOptions.RemoveEmptyEntries)).Trim();
             return string.IsNullOrEmpty(sanitized) ? "Report" : sanitized;
+        }
+
+        /// <summary>Format compliance score for PDF: 0 and 100 (and whole numbers) without decimals; otherwise one decimal.</summary>
+        private static string FormatComplianceScore(double score)
+        {
+            if (Math.Abs(score - Math.Round(score)) < 1e-9)
+                return ((int)Math.Round(score)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return score.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

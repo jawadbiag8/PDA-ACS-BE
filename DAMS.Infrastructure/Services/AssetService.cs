@@ -1255,6 +1255,39 @@ namespace DAMS.Infrastructure.Services
             }
         }
 
+        public Task<byte[]> GetBulkUploadTemplateAsync()
+        {
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                TrimOptions = TrimOptions.Trim
+            };
+            using var memory = new MemoryStream();
+            using (var writer = new StreamWriter(memory, leaveOpen: true))
+            using (var csv = new CsvWriter(writer, config))
+            {
+                csv.WriteRecords(new[]
+                {
+                    new CreateAssetDto
+                    {
+                        MinistryId = 1,
+                        DepartmentId = 1,
+                        AssetName = "Sample Asset Name",
+                        AssetUrl = "https://example.gov.ae",
+                        Description = "Optional description",
+                        CitizenImpactLevelId = 1,
+                        PrimaryContactName = "",
+                        PrimaryContactEmail = "",
+                        PrimaryContactPhone = "",
+                        TechnicalContactName = "",
+                        TechnicalContactEmail = "",
+                        TechnicalContactPhone = ""
+                    }
+                });
+            }
+            memory.Position = 0;
+            return Task.FromResult(memory.ToArray());
+        }
+
         private string ValidateAssetDto(CreateAssetDto dto, List<Ministry> ministries, List<Department> departments, List<CommonLookup> citizenImpactLevels)
         {
             // Validate mandatory fields

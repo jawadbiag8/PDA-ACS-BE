@@ -135,6 +135,15 @@ namespace DAMS.API.Controllers
             return Ok(response);
         }
 
+        /// <summary>Download CSV template for bulk asset upload. Use the same file format with POST /api/Asset/bulk-upload.</summary>
+        [HttpGet("bulk-upload/template")]
+        public async Task<IActionResult> DownloadBulkUploadTemplate()
+        {
+            var bytes = await _assetService.GetBulkUploadTemplateAsync();
+            const string fileName = "asset-bulk-upload-template.csv";
+            return File(bytes, "text/csv", fileName);
+        }
+
         [HttpPost("bulk-upload")]
         public async Task<ActionResult<APIResponse>> BulkUploadAssets(IFormFile file)
         {

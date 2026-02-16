@@ -66,6 +66,7 @@ No authentication required for login/logout.
 | POST | `/api/asset` | Create asset. Body: `CreateAssetDto`. |
 | PUT | `/api/asset/{id}` | Update asset. Body: `UpdateAssetDto`. |
 | DELETE | `/api/asset/{id}` | Delete asset. |
+| GET | `/api/asset/bulk-upload/template` | Download CSV template for bulk upload (headers match upload format; one example row). |
 | POST | `/api/asset/bulk-upload` | Bulk upload assets. Body: form-data, file (CSV, max 10MB). |
 
 ---
