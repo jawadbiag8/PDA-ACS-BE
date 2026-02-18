@@ -2219,14 +2219,18 @@ namespace DAMS.Infrastructure.Services
                     {
                         if (hitMissKpiIds.Contains(kpi.Id))
                         {
-                            return MapToKpiItemDtoFromHistoryHitMiss(kpi, asset.CitizenImpactLevel?.Name, historyRows);
+                            return MapToKpiItemDtoFromHistoryHitMiss(kpi, asset.CitizenImpactLevel?.Name, historyRows, allKpisResults);
                         }
                         if (kpi.Id == 15)
                         {
-                            return MapToKpiItemDtoFromHistoryAvgResult(kpi, asset.CitizenImpactLevel?.Name, historyRows);
+                            return MapToKpiItemDtoFromHistoryAvgResult(kpi, asset.CitizenImpactLevel?.Name, historyRows, allKpisResults);
+                        }
+                        if (kpi.Id == 6 || kpi.Id == 7 || kpi.Id == 8)
+                        {
+                            return MapToKpiItemDtoFromHistoryAvgNumeric(kpi, asset.CitizenImpactLevel?.Name, historyRows, allKpisResults);
                         }
                         var allKpiResults = allKpisResults.Where(r => r.KpiId == kpi.Id).ToList();
-                        return MapToKpiItemDtoFromHistory(kpi, asset.CitizenImpactLevel?.Name, allKpiResults);
+                        return MapToKpiItemDtoFromHistory(kpi, asset.CitizenImpactLevel?.Name, allKpiResults, allKpisResults);
                     }).ToList()
                 })
                 .Where(c => c.Kpis.Any())
@@ -2280,7 +2284,7 @@ namespace DAMS.Infrastructure.Services
                 KpiName = kpi.KpiName,
                 Manual = kpi.Manual,
                 Target = target,
-                CurrentValue = currentValue,
+                AverageValue = currentValue,
                 SlaStatus = slaStatus,
                 LastChecked = lastChecked,
                 DataSource = dataSource
@@ -2315,6 +2319,53 @@ namespace DAMS.Infrastructure.Services
                 i++;
             var unit = t.Substring(i).Trim();
             return string.IsNullOrEmpty(unit) ? null : unit;
+        }
+
+        /// <summary>
+        /// Gets current value from the latest KPIsResult row (by UpdatedAt) for the control panel.
+        /// Numeric/% KPIs (6,7,8,15,16,17,18,23): Result formatted with unit (sec, MB, %). Boolean KPIs: "0" (hit) or "1" (miss).
+        /// </summary>
+        private static string GetCurrentValueFromLatestKpisResult(int kpiId, IEnumerable<dynamic>? allKpisResults, string? target)
+        {
+            if (allKpisResults == null) return "N/A";
+            var forKpi = allKpisResults
+                .Where(r => r != null && r.KpiId == kpiId)
+                .OrderByDescending(r =>
+                {
+                    try { if (r.UpdatedAt != null) return (DateTime)r.UpdatedAt; } catch { }
+                    return DateTime.MinValue;
+                })
+                .FirstOrDefault();
+            if (forKpi == null) return "N/A";
+
+            string resultStr = (forKpi.Result?.ToString() ?? "").Trim();
+            string targetStr = (forKpi.Target?.ToString() ?? "").Trim().ToLowerInvariant();
+
+            // Numeric/% KPIs: format Result with unit
+            if (kpiId == 6 || kpiId == 7)
+            {
+                if (string.IsNullOrWhiteSpace(resultStr)) return "N/A";
+                return double.TryParse(resultStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double _)
+                    ? $"{resultStr} {(GetUnitFromTarget(target) ?? "sec")}" : resultStr;
+            }
+            if (kpiId == 8)
+            {
+                if (string.IsNullOrWhiteSpace(resultStr)) return "N/A";
+                return ExtractNumericValue(resultStr).HasValue ? $"{resultStr} {(GetUnitFromTarget(target) ?? "MB")}" : resultStr;
+            }
+            if (kpiId == 15 || kpiId == 16 || kpiId == 17 || kpiId == 18 || kpiId == 23)
+            {
+                if (string.IsNullOrWhiteSpace(resultStr)) return "N/A";
+                return resultStr.Contains("%") ? resultStr : $"{resultStr}%";
+            }
+
+            // Boolean/flag KPIs: 0 = hit/good, 1 = miss/bad (use Target when hit/miss, else Result true/false)
+            if (targetStr == "hit" || targetStr == "pass") return "0";
+            if (targetStr == "miss" || targetStr == "fail") return "1";
+            var resLower = resultStr.ToLowerInvariant();
+            if (resLower == "false") return "0";
+            if (resLower == "true") return "1";
+            return "N/A";
         }
 
         /// <summary>
@@ -2661,7 +2712,7 @@ namespace DAMS.Infrastructure.Services
         /// <summary>
         /// KPI 15 (WCAG compliance score): current value = AVG(Result) from KPIsResultHistories (last 30 days). Target &lt;= calculated → COMPLIANT.
         /// </summary>
-        private KpiItemDto MapToKpiItemDtoFromHistoryAvgResult(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows)
+        private KpiItemDto MapToKpiItemDtoFromHistoryAvgResult(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows, IEnumerable<dynamic>? allKpisResults = null)
         {
             var rows = allHistoryRows.Where(r => r.KpiId == kpi.Id).ToList();
             var values = new List<double>();
@@ -2670,13 +2721,13 @@ namespace DAMS.Infrastructure.Services
                 var parsed = ExtractNumericValue(r.Result ?? "");
                 if (parsed.HasValue) values.Add(parsed.Value);
             }
-            string currentValue = values.Count > 0 ? $"{Math.Round(values.Average(), 2)}%" : "N/A";
+            string averageValue = values.Count > 0 ? $"{Math.Round(values.Average(), 2)}%" : "N/A";
 
             string target = GetTargetForKpi(kpi, citizenImpactLevelName);
             target = EnsureTargetHasUnit(kpi.Id, target);
-            var slaStatus = (string.IsNullOrWhiteSpace(currentValue) || currentValue == "N/A")
+            var slaStatus = (string.IsNullOrWhiteSpace(averageValue) || averageValue == "N/A")
                 ? "UNKNOWN"
-                : CalculateSlaStatus(currentValue, target, kpi.Id);
+                : CalculateSlaStatus(averageValue, target, kpi.Id);
 
             DateTime lastCheckedAt = rows.Count > 0 ? rows.Max(r => r.CreatedAt) : default;
             var lastChecked = lastCheckedAt != default ? GetTimeAgo(lastCheckedAt) : "N/A";
@@ -2685,12 +2736,61 @@ namespace DAMS.Infrastructure.Services
                 ? "Auto"
                 : "Manual";
 
+            string currentValue = GetCurrentValueFromLatestKpisResult(kpi.Id, allKpisResults, target);
+
             return new KpiItemDto
             {
                 KpiId = kpi.Id,
                 KpiName = kpi.KpiName,
                 Manual = kpi.Manual,
                 Target = target,
+                AverageValue = averageValue,
+                CurrentValue = currentValue,
+                SlaStatus = slaStatus,
+                LastChecked = lastChecked,
+                DataSource = dataSource
+            };
+        }
+
+        /// <summary>
+        /// KPI 6, 7, 8 (numeric): average = AVG(Result) from KPIsResultHistories (last 30 days). Unit: sec (6,7), MB (8).
+        /// </summary>
+        private KpiItemDto MapToKpiItemDtoFromHistoryAvgNumeric(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows, IEnumerable<dynamic>? allKpisResults = null)
+        {
+            string target = GetTargetForKpi(kpi, citizenImpactLevelName);
+            target = EnsureTargetHasUnit(kpi.Id, target);
+            string unit = GetUnitFromTarget(target) ?? (kpi.Id == 8 ? "MB" : "sec");
+            string sep = (unit == "%" || (unit?.StartsWith("%", StringComparison.Ordinal) ?? false)) ? "" : " ";
+
+            var rows = allHistoryRows.Where(r => r.KpiId == kpi.Id).ToList();
+            var values = new List<double>();
+            foreach (var r in rows)
+            {
+                var parsed = ExtractNumericValue(r.Result ?? "");
+                if (parsed.HasValue) values.Add(parsed.Value);
+            }
+            string averageValue = values.Count > 0 ? $"{Math.Round(values.Average(), 2)}{sep}{unit}" : "N/A";
+
+            var slaStatus = (string.IsNullOrWhiteSpace(averageValue) || averageValue == "N/A")
+                ? "UNKNOWN"
+                : CalculateSlaStatus(averageValue, target, kpi.Id);
+
+            DateTime lastCheckedAt = rows.Count > 0 ? rows.Max(r => r.CreatedAt) : default;
+            var lastChecked = lastCheckedAt != default ? GetTimeAgo(lastCheckedAt) : "N/A";
+
+            var dataSource = string.IsNullOrWhiteSpace(kpi.Manual) || kpi.Manual.Equals("Auto", StringComparison.OrdinalIgnoreCase)
+                ? "Auto"
+                : "Manual";
+
+            string currentValue = GetCurrentValueFromLatestKpisResult(kpi.Id, allKpisResults, target);
+
+            return new KpiItemDto
+            {
+                KpiId = kpi.Id,
+                KpiName = kpi.KpiName,
+                Manual = kpi.Manual,
+                Target = target,
+                AverageValue = averageValue,
                 CurrentValue = currentValue,
                 SlaStatus = slaStatus,
                 LastChecked = lastChecked,
@@ -2700,9 +2800,9 @@ namespace DAMS.Infrastructure.Services
 
         /// <summary>
         /// Builds KpiItemDto for hit/miss KPIs using KPIsResultHistories (last 30 days).
-        /// Current value = (hits / total records) * 100; Target column used for hit/miss.
+        /// Average value = (hits / total records) * 100; Target column used for hit/miss.
         /// </summary>
-        private KpiItemDto MapToKpiItemDtoFromHistoryHitMiss(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows)
+        private KpiItemDto MapToKpiItemDtoFromHistoryHitMiss(KpisLov kpi, string? citizenImpactLevelName, List<KpiHistoryRowDto> allHistoryRows, IEnumerable<dynamic>? allKpisResults = null)
         {
             // Exclude "skipped" from all counts: only hit and miss count. If all entries are skipped, total = 0 → N/A and UNKNOWN.
             var rows = allHistoryRows
@@ -2722,16 +2822,16 @@ namespace DAMS.Infrastructure.Services
             int misses = total - hits;
 
             // KPI 1, 2: hit/total % (target <= calculated → COMPLIANT). All others: misses/total % (target >= calculated → COMPLIANT).
-            string currentValue;
+            string averageValue;
             if (kpi.Id == 1 || kpi.Id == 2)
-                currentValue = total > 0 ? $"{Math.Round(hits / (double)total * 100.0, 2)}%" : "N/A"; // Hit rate %
+                averageValue = total > 0 ? $"{Math.Round(hits / (double)total * 100.0, 2)}%" : "N/A"; // Hit rate %
             else
-                currentValue = total > 0 ? $"{Math.Round(misses / (double)total * 100.0, 2)}%" : "N/A"; // Miss %
+                averageValue = total > 0 ? $"{Math.Round(misses / (double)total * 100.0, 2)}%" : "N/A"; // Miss %
 
             string target = GetTargetForKpi(kpi, citizenImpactLevelName);
             target = EnsureTargetHasUnit(kpi.Id, target);
-            // UNKNOWN only when there is no data (current value N/A). When we have data and 0% (all misses), use normal SLA → NON-COMPLIANT.
-            var slaStatus = total == 0 ? "UNKNOWN" : CalculateSlaStatus(currentValue, target, kpi.Id);
+            // UNKNOWN only when there is no data (average value N/A). When we have data and 0% (all misses), use normal SLA → NON-COMPLIANT.
+            var slaStatus = total == 0 ? "UNKNOWN" : CalculateSlaStatus(averageValue, target, kpi.Id);
 
             DateTime lastCheckedAt = default;
             if (rows.Count > 0)
@@ -2745,12 +2845,15 @@ namespace DAMS.Infrastructure.Services
                 ? "Auto"
                 : "Manual";
 
+            string currentValue = GetCurrentValueFromLatestKpisResult(kpi.Id, allKpisResults, target);
+
             return new KpiItemDto
             {
                 KpiId = kpi.Id,
                 KpiName = kpi.KpiName,
                 Manual = kpi.Manual,
                 Target = target,
+                AverageValue = averageValue,
                 CurrentValue = currentValue,
                 SlaStatus = slaStatus,
                 LastChecked = lastChecked,
@@ -2773,24 +2876,29 @@ namespace DAMS.Infrastructure.Services
             return kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
         }
 
-        private KpiItemDto MapToKpiItemDtoFromHistory(KpisLov kpi, string? citizenImpactLevelName = null, IEnumerable<dynamic>? allKpiResults = null)
+        private KpiItemDto MapToKpiItemDtoFromHistory(KpisLov kpi, string? citizenImpactLevelName = null, IEnumerable<dynamic>? allKpiResults = null, IEnumerable<dynamic>? allKpisResults = null)
         {
-            // Helper function to get latest result when needed
-            dynamic? GetLatestResult() => allKpiResults?.OrderByDescending(r => r.CreatedAt).FirstOrDefault();
+            // Helper function to get latest result when needed (by UpdatedAt for last-checked)
+            dynamic? GetLatestResult() => allKpiResults?.OrderByDescending(r =>
+            {
+                try { if (r.UpdatedAt != null) return (DateTime)r.UpdatedAt; } catch { }
+                return DateTime.MinValue;
+            }).FirstOrDefault();
 
             string target = GetTargetForKpi(kpi, citizenImpactLevelName);
 
             // Ensure target has unit suffix when stored as bare number (e.g. "3" -> "3 sec", "95" -> "95%")
             target = EnsureTargetHasUnit(kpi.Id, target);
-            
-            // Current value: unit taken from target so it matches (e.g. target "5 sec" -> current "3 sec", target "10 MB" -> current "3 MB")
-            string currentValue = GetCurrentValueForControlPanel(kpi.Id, allKpiResults, target);
-            // Same as hit/miss: UNKNOWN only when current value is N/A (no data); otherwise compute SLA from actual value
-            var slaStatus = (string.IsNullOrWhiteSpace(currentValue) || currentValue == "N/A")
-                ? "UNKNOWN"
-                : CalculateSlaStatus(currentValue, target, kpi.Id);
 
-            // Last checked: UpdatedAt from KpiResult, fallback to CreatedAt
+            // Average value: from KPIsResult list (for manual/other numeric KPIs that use this path)
+            string averageValue = GetCurrentValueForControlPanel(kpi.Id, allKpiResults, target);
+            // Current value: latest row from KPIsResult by UpdatedAt (formatted per KPI type)
+            string currentValue = GetCurrentValueFromLatestKpisResult(kpi.Id, allKpisResults ?? allKpiResults, target);
+
+            var slaStatus = (string.IsNullOrWhiteSpace(averageValue) || averageValue == "N/A")
+                ? "UNKNOWN"
+                : CalculateSlaStatus(averageValue, target, kpi.Id);
+
             var latestResult = GetLatestResult();
             DateTime lastCheckedAt = default;
             if (latestResult != null)
@@ -2801,7 +2909,6 @@ namespace DAMS.Infrastructure.Services
             }
             var lastChecked = lastCheckedAt != default ? GetTimeAgo(lastCheckedAt) : "N/A";
 
-            // Data source: Auto or Manual per KpisLov
             var dataSource = string.IsNullOrWhiteSpace(kpi.Manual) || kpi.Manual.Equals("Auto", StringComparison.OrdinalIgnoreCase)
                 ? "Auto"
                 : "Manual";
@@ -2812,6 +2919,7 @@ namespace DAMS.Infrastructure.Services
                 KpiName = kpi.KpiName,
                 Manual = kpi.Manual,
                 Target = target,
+                AverageValue = averageValue,
                 CurrentValue = currentValue,
                 SlaStatus = slaStatus,
                 LastChecked = lastChecked,

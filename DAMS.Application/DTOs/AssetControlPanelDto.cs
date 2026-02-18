@@ -18,6 +18,8 @@ namespace DAMS.Application.DTOs
         public string KpiName { get; set; } = string.Empty;
         public string Target { get; set; } = string.Empty;
         public string Manual { get; set; } = string.Empty;
+        public string AverageValue { get; set; } = "N/A";
+        /// <summary>Latest value from KPIsResult (by UpdatedAt). Numeric/% KPIs: value + unit (sec, MB, %). Boolean KPIs: "0" (hit) or "1" (miss).</summary>
         public string CurrentValue { get; set; } = "N/A";
         public string SlaStatus { get; set; } = "UNKNOWN";
         public string LastChecked { get; set; } = "N/A";
