@@ -900,6 +900,7 @@ namespace DAMS.Infrastructure.Services
             await _context.SaveChangesAsync();
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
 
             var assetDto = MapToAssetDto(asset);
             return new APIResponse
@@ -1084,6 +1085,7 @@ namespace DAMS.Infrastructure.Services
             await _context.SaveChangesAsync();
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetKpisLov(id));
 
@@ -1117,6 +1119,7 @@ namespace DAMS.Infrastructure.Services
             await _context.SaveChangesAsync();
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetKpisLov(id));
 
@@ -1231,6 +1234,7 @@ namespace DAMS.Infrastructure.Services
                     await _context.SaveChangesAsync();
                     response.SuccessfulCount = validAssets.Count;
                     await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+                    await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
                 }
 
                 response.Errors = errors;

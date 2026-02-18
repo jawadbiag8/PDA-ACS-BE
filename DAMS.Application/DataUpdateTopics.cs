@@ -6,6 +6,9 @@ public static class DataUpdateTopics
     /// <summary>GET /api/AdminDashboard/summary</summary>
     public const string AdminDashboardSummary = "AdminDashboard.Summary";
 
+    /// <summary>GET /api/PMDashboard/header</summary>
+    public const string PMDashboardHeader = "PMDashboard.Header";
+
     /// <summary>GET /api/Incident/{id}</summary>
     public static string Incident(int id) => $"Incident.{id}";
 

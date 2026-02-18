@@ -74,12 +74,15 @@ namespace DAMS.API.Controllers
             return Ok(response);
         }
 
-        /// <summary>Notify connected clients that this asset's control panel data (slaStatus, currentValue, lastChecked) has changed. Call this after updating KPIsResult or KPIsResultHistory for the asset so the UI can refetch GET /api/Asset/{id}/controlpanel.</summary>
+        /// <summary>Notify connected clients that this asset's control panel data has changed (e.g. after manual KPI check or scheduler update). Refreshes control panel, KpisLov, and both dashboards. Call after updating KPIsResult or KPIsResultHistory for the asset.</summary>
         [HttpPost("{id}/controlpanel/notify")]
         public async Task<ActionResult<APIResponse>> NotifyControlPanelUpdated(int id)
         {
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetControlPanel(id));
-            return Ok(new APIResponse { IsSuccessful = true, Message = "Control panel update notified.", Data = null });
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AssetKpisLov(id));
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
+            return Ok(new APIResponse { IsSuccessful = true, Message = "Control panel and dashboards update notified.", Data = null });
         }
 
         [HttpGet("ministry/{ministryId}")]

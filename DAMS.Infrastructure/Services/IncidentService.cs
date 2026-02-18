@@ -395,6 +395,7 @@ namespace DAMS.Infrastructure.Services
             await _context.SaveChangesAsync();
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(incident.Id));
 
             var incidentDto = MapToIncidentDto(incident);
@@ -499,6 +500,7 @@ namespace DAMS.Infrastructure.Services
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(id));
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
 
             var incidentDto = MapToIncidentDto(incident);
             return new APIResponse
@@ -532,6 +534,7 @@ namespace DAMS.Infrastructure.Services
             await _context.SaveChangesAsync();
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(id));
 
             return new APIResponse
@@ -864,6 +867,7 @@ namespace DAMS.Infrastructure.Services
 
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.Incident(dto.IncidentId));
             await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.AdminDashboardSummary);
+            await _dataUpdateNotifier.NotifyTopicAsync(DataUpdateTopics.PMDashboardHeader);
 
             var commentDto = MapToIncidentCommentDto(comment);
             return new APIResponse
