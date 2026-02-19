@@ -50,6 +50,15 @@ namespace DAMS.Infrastructure.Services
 
         public async Task<APIResponse> GetAllIncidentsAsync(IncidentFilterDto filter)
         {
+            // Global summary counts (system-wide, no list filters): Open = 8, Closed = 12
+            var baseQuery = _context.Incidents.Where(i => i.DeletedAt == null);
+            var summary = new IncidentSummaryDto
+            {
+                TotalIncidents = await baseQuery.CountAsync(),
+                OpenIncidents = await baseQuery.CountAsync(i => i.StatusId == 8),
+                ClosedIncidents = await baseQuery.CountAsync(i => i.StatusId == 12)
+            };
+
             var query = _context.Incidents
                 .Include(i => i.Asset)
                     .ThenInclude(a => a.Ministry)
@@ -69,6 +78,10 @@ namespace DAMS.Infrastructure.Services
 
             // Always exclude deleted incidents
             query = query.Where(i => i.DeletedAt == null);
+
+            // Archive: hide closed (StatusId 12) incidents closed more than 7 days ago (UpdatedAt). Summary counts still include all.
+            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+            query = query.Where(i => i.StatusId != 12 || (i.UpdatedAt != null && i.UpdatedAt >= sevenDaysAgo));
 
             // Apply filters
             if (!string.IsNullOrEmpty(filter.SearchTerm))
@@ -156,8 +169,9 @@ namespace DAMS.Infrastructure.Services
 
             var dashboardDtos = incidents.Select(MapToIncidentDashboardDto).ToList();
 
-            var pagedResponse = new PagedResponse<IncidentDashboardDto>
+            var listResponse = new IncidentListResponseDto
             {
+                Summary = summary,
                 Data = dashboardDtos,
                 TotalCount = totalCount,
                 PageNumber = filter.PageNumber,
@@ -168,7 +182,7 @@ namespace DAMS.Infrastructure.Services
             {
                 IsSuccessful = true,
                 Message = "Incidents retrieved successfully",
-                Data = pagedResponse
+                Data = listResponse
             };
         }
 
@@ -199,6 +213,10 @@ namespace DAMS.Infrastructure.Services
 
             // Always exclude deleted incidents
             query = query.Where(i => i.DeletedAt == null);
+
+            // Archive: hide closed (StatusId 12) incidents closed more than 7 days ago (UpdatedAt). Summary counts still include all.
+            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+            query = query.Where(i => i.StatusId != 12 || (i.UpdatedAt != null && i.UpdatedAt >= sevenDaysAgo));
 
             // Apply filters
             if (!string.IsNullOrEmpty(filter.SearchTerm))
