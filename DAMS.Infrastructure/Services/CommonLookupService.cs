@@ -101,7 +101,7 @@ namespace DAMS.Infrastructure.Services
         {
             var commonLookups = await _context.CommonLookups
                 .Where(cl => cl.Type == type && cl.DeletedAt == null)
-                .OrderBy(cl => cl.Name)
+                .OrderByDescending(cl => cl.Id)
                 .ToListAsync();
 
             var commonLookupDtos = commonLookups.Select(MapToCommonLookupDto).ToList();

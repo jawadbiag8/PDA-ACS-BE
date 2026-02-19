@@ -620,8 +620,8 @@ namespace DAMS.Infrastructure.Services
 
         private static readonly HashSet<int> CalculationKpiIds = new() { 6, 7, 8, 15, 16, 17, 18, 23 };
 
-        /// <summary>Static KPIs: fixed strings + historyTarget (miss = failure). Calculation KPIs: target from CitizenImpactLevel + KpisLov, current from historyResult. KpiId selects which KpisLov/asset we use.</summary>
-        private static (string TargetValue, string CurrentValue) GetKpiTargetAndCurrentDisplays(
+        /// <summary>Static KPIs: fixed strings + historyTarget (miss = failure). For display-only KPIs (1,2,3,4,5,9,10,11,12,13,14,19,20,21,22,24) targetValue is null in API; currentValue only.</summary>
+        private static (string? TargetValue, string CurrentValue) GetKpiTargetAndCurrentDisplays(
             int kpiId,
             Asset? asset,
             KpisLov? kpisLov,
@@ -632,22 +632,22 @@ namespace DAMS.Infrastructure.Services
 
             switch (kpiId)
             {
-                case 1: return ("Up", isFailure ? "Down" : "Up");
-                case 2: return ("No DNS failure", isFailure ? "DNS failed" : "No DNS failure");
-                case 3: return ("No hosting outage", isFailure ? "Hosting outage detected" : "No hosting outage");
-                case 4: return ("No partial outage", isFailure ? "Partial outage detected" : "No partial outage");
-                case 5: return ("No flapping", isFailure ? "Flapping detected" : "No flapping");
-                case 9: return ("Using HTTPS", isFailure ? "Not using HTTPS" : "Using HTTPS");
-                case 10: return ("Valid certificate", isFailure ? "Expired/Missing certificate" : "Valid certificate");
-                case 11: return ("No warnings", isFailure ? "Warnings detected" : "No warnings");
-                case 12: return ("No warnings", isFailure ? "Warnings detected" : "No warnings");
-                case 13: return ("No suspicious redirects", isFailure ? "Suspicious redirects detected" : "No suspicious redirects");
-                case 14: return ("Available", isFailure ? "Not available" : "Available");
-                case 19: return ("Successful", isFailure ? "Failed" : "Successful");
-                case 20: return ("Working", isFailure ? "Broken" : "Working");
-                case 21: return ("Working", isFailure ? "Broken" : "Working");
-                case 22: return ("Available", isFailure ? "Not available" : "Available");
-                case 24: return ("No circular navigation", isFailure ? "Circular navigation detected" : "No circular navigation");
+                case 1: return (null, isFailure ? "Down" : "Up");
+                case 2: return (null, isFailure ? "DNS failed" : "No DNS failure");
+                case 3: return (null, isFailure ? "Hosting outage detected" : "No hosting outage");
+                case 4: return (null, isFailure ? "Partial outage detected" : "No partial outage");
+                case 5: return (null, isFailure ? "Flapping detected" : "No flapping");
+                case 9: return (null, isFailure ? "Not using HTTPS" : "Using HTTPS");
+                case 10: return (null, isFailure ? "Expired/Missing certificate" : "Valid certificate");
+                case 11: return (null, isFailure ? "Warnings detected" : "No warnings");
+                case 12: return (null, isFailure ? "Warnings detected" : "No warnings");
+                case 13: return (null, isFailure ? "Suspicious redirects detected" : "No suspicious redirects");
+                case 14: return (null, isFailure ? "Not available" : "Available");
+                case 19: return (null, isFailure ? "Failed" : "Successful");
+                case 20: return (null, isFailure ? "Broken" : "Working");
+                case 21: return (null, isFailure ? "Broken" : "Working");
+                case 22: return (null, isFailure ? "Not available" : "Available");
+                case 24: return (null, isFailure ? "Circular navigation detected" : "No circular navigation");
 
                 default:
                     if (CalculationKpiIds.Contains(kpiId))

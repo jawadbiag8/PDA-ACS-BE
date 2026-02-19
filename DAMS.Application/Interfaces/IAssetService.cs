@@ -16,7 +16,7 @@ namespace DAMS.Application.Interfaces
         Task<APIResponse> UpdateAssetAsync(int id, UpdateAssetDto dto, string updatedBy);
         Task<APIResponse> DeleteAssetAsync(int id, string deletedBy);
         Task<APIResponse> BulkUploadAssetsAsync(Stream csvStream, string createdBy);
-        /// <summary>Returns CSV template bytes for bulk asset upload. Headers match CreateAssetDto; one example row included.</summary>
+        /// <summary>Returns CSV template bytes for bulk asset upload. Uses Ministry, Department, and CitizenImpactLevel (names) with one example row.</summary>
         Task<byte[]> GetBulkUploadTemplateAsync();
         Task<APIResponse> GetDashboardSummaryAsync();
         Task<APIResponse> GetAssetDashboardHeaderAsync(int assetId);

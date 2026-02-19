@@ -173,21 +173,21 @@ namespace DAMS.Infrastructure.Seeding
             {
                 new CommonLookup
                 {
-                    Name = "LOW - Supporting Services",
+                    Name = "LOW - It provides supporting or informational functions",
                     Type = "CitizenImpactLevel",
                     CreatedAt = DateTime.Now,
                     CreatedBy = "NA"
                 },
                 new CommonLookup
                 {
-                    Name = "MEDIUM - Important Services",
+                    Name = "MEDIUM - It shows official communication",
                     Type = "CitizenImpactLevel",
                     CreatedAt = DateTime.Now,
                     CreatedBy = "NA"
                 },
                 new CommonLookup
                 {
-                    Name = "HIGH - Critical Public Services",
+                    Name = "HIGH - It delivers essential public or statutory services",
                     Type = "CitizenImpactLevel",
                     CreatedAt = DateTime.Now,
                     CreatedBy = "NA"

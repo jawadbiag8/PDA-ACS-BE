@@ -1147,11 +1147,11 @@ namespace DAMS.Infrastructure.Services
                     TrimOptions = TrimOptions.Trim
                 });
 
-                // Read all records from CSV
-                var records = csv.GetRecords<CreateAssetDto>().ToList();
-                response.TotalRows = records.Count;
+                // Read all records from CSV (template uses Ministry, Department, CitizenImpactLevel by name)
+                var rows = csv.GetRecords<AssetBulkUploadTemplateRow>().ToList();
+                response.TotalRows = rows.Count;
 
-                // Pre-fetch lookup data for validation
+                // Pre-fetch lookup data for validation and name resolution
                 var ministries = await _context.Ministries.Where(m => m.DeletedAt == null).ToListAsync();
                 var departments = await _context.Departments.Where(d => d.DeletedAt == null).ToListAsync();
                 var citizenImpactLevels = await _context.CommonLookups
@@ -1170,17 +1170,30 @@ namespace DAMS.Infrastructure.Services
                 var rowNumber = 1; // Start at 1 (header is row 0)
                 var processedUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // Track URLs in current batch
                 
-                foreach (var dto in records)
+                foreach (var row in rows)
                 {
                     rowNumber++; // Increment to account for header row (first data row is row 2)
-                    var validationError = ValidateAssetDto(dto, ministries, departments, citizenImpactLevels);
+                    var (dto, resolveError) = TryResolveBulkUploadRow(row, ministries, departments, citizenImpactLevels);
+                    if (resolveError != null)
+                    {
+                        errors.Add(new BulkUploadErrorDto
+                        {
+                            RowNumber = rowNumber,
+                            AssetName = !string.IsNullOrWhiteSpace(row.AssetName) ? row.AssetName.Trim() : "N/A",
+                            ErrorMessage = resolveError
+                        });
+                        response.FailedCount++;
+                        continue;
+                    }
+
+                    var validationError = ValidateAssetDto(dto!, ministries, departments, citizenImpactLevels);
 
                     if (!string.IsNullOrEmpty(validationError))
                     {
                         errors.Add(new BulkUploadErrorDto
                         {
                             RowNumber = rowNumber,
-                            AssetName = dto.AssetName ?? "N/A",
+                            AssetName = dto!.AssetName ?? "N/A",
                             ErrorMessage = validationError
                         });
                         response.FailedCount++;
@@ -1188,7 +1201,7 @@ namespace DAMS.Infrastructure.Services
                     }
 
                     // Check for duplicate URL (in database or within current batch)
-                    var trimmedUrl = dto.AssetUrl?.Trim() ?? string.Empty;
+                    var trimmedUrl = dto!.AssetUrl?.Trim() ?? string.Empty;
                     var urlLower = trimmedUrl.ToLowerInvariant();
                     
                     if (existingAssetUrls.Contains(urlLower) || processedUrls.Contains(urlLower))
@@ -1285,25 +1298,79 @@ namespace DAMS.Infrastructure.Services
             {
                 csv.WriteRecords(new[]
                 {
-                    new CreateAssetDto
+                    new AssetBulkUploadTemplateRow
                     {
-                        MinistryId = 1,
-                        DepartmentId = 1,
+                        MinistryName = "Ministry of Defence",
+                        DepartmentName = "IT Department",
                         AssetName = "Sample Asset Name",
-                        AssetUrl = "https://example.gov.ae",
+                        AssetUrl = "https://example.gov.pk",
                         Description = "Optional description",
-                        CitizenImpactLevelId = 1,
+                        CitizenImpactLevel = "high",
                         PrimaryContactName = "",
                         PrimaryContactEmail = "",
-                        PrimaryContactPhone = "",
+                        PrimaryContactPhone = "'+00-012-345-6789",
                         TechnicalContactName = "",
                         TechnicalContactEmail = "",
-                        TechnicalContactPhone = ""
+                        TechnicalContactPhone = "'+00-012-345-6789"
                     }
                 });
             }
             memory.Position = 0;
             return Task.FromResult(memory.ToArray());
+        }
+
+        /// <summary>Resolves CSV row (name-based Ministry, Department, CitizenImpactLevel) to CreateAssetDto with IDs. Returns (dto, null) on success or (null, errorMessage) on failure.</summary>
+        private static (CreateAssetDto? Dto, string? Error) TryResolveBulkUploadRow(
+            AssetBulkUploadTemplateRow row,
+            List<Ministry> ministries,
+            List<Department> departments,
+            List<CommonLookup> citizenImpactLevels)
+        {
+            var ministryName = (row.MinistryName ?? "").Trim();
+            if (string.IsNullOrEmpty(ministryName))
+                return (null, "Ministry Name is required.");
+            var ministry = ministries.FirstOrDefault(m => m.MinistryName.Trim().Equals(ministryName, StringComparison.OrdinalIgnoreCase));
+            if (ministry == null)
+                return (null, $"Ministry '{ministryName}' not found.");
+
+            int? departmentId = null;
+            var departmentName = (row.DepartmentName ?? "").Trim();
+            if (!string.IsNullOrEmpty(departmentName))
+            {
+                var department = departments.FirstOrDefault(d => d.MinistryId == ministry.Id && d.DepartmentName.Trim().Equals(departmentName, StringComparison.OrdinalIgnoreCase));
+                if (department == null)
+                    return (null, $"Department '{departmentName}' not found for ministry '{ministry.MinistryName}'.");
+                departmentId = department.Id;
+            }
+
+            var impactKey = (row.CitizenImpactLevel ?? "").Trim();
+            if (string.IsNullOrEmpty(impactKey))
+                return (null, "Citizen Impact Level is required.");
+            // Map high/medium/low (or full name) to lookup: match by exact name or by name starting with the value
+            var impact = citizenImpactLevels.FirstOrDefault(c =>
+            {
+                var name = c.Name.Trim();
+                return name.Equals(impactKey, StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith(impactKey, StringComparison.OrdinalIgnoreCase);
+            });
+            if (impact == null)
+                return (null, $"Citizen Impact Level '{impactKey}' not found. Use high, medium, or low.");
+
+            return (new CreateAssetDto
+            {
+                MinistryId = ministry.Id,
+                DepartmentId = departmentId,
+                AssetName = row.AssetName ?? "",
+                AssetUrl = row.AssetUrl ?? "",
+                Description = row.Description,
+                CitizenImpactLevelId = impact.Id,
+                PrimaryContactName = row.PrimaryContactName,
+                PrimaryContactEmail = row.PrimaryContactEmail,
+                PrimaryContactPhone = row.PrimaryContactPhone,
+                TechnicalContactName = row.TechnicalContactName,
+                TechnicalContactEmail = row.TechnicalContactEmail,
+                TechnicalContactPhone = row.TechnicalContactPhone
+            }, null);
         }
 
         private string ValidateAssetDto(CreateAssetDto dto, List<Ministry> ministries, List<Department> departments, List<CommonLookup> citizenImpactLevels)
@@ -2865,17 +2932,22 @@ namespace DAMS.Infrastructure.Services
             };
         }
 
+        /// <summary>Resolves KPI target from citizen impact level name. Uses same names as CommonLookup (e.g. HIGH - Critical Public Services) and fallback by prefix.</summary>
         private static string GetTargetForKpi(KpisLov kpi, string? citizenImpactLevelName)
         {
             if (!string.IsNullOrWhiteSpace(citizenImpactLevelName))
             {
-                if (citizenImpactLevelName.Equals("HIGH - Critical Public Services", StringComparison.OrdinalIgnoreCase))
+                var name = citizenImpactLevelName.Trim();
+                // Match exact names used in IncidentService / CommonLookup
+                if (name.Equals("HIGH - Critical Public Services", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("HIGH -", StringComparison.OrdinalIgnoreCase))
                     return kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
-                if (citizenImpactLevelName.Equals("MEDIUM - Important Services", StringComparison.OrdinalIgnoreCase))
+                if (name.Equals("MEDIUM - Important Services", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("MEDIUM -", StringComparison.OrdinalIgnoreCase))
                     return kpi.TargetMedium ?? kpi.TargetHigh ?? kpi.TargetLow ?? "N/A";
-                if (citizenImpactLevelName.Equals("LOW - Supporting Services", StringComparison.OrdinalIgnoreCase))
+                if (name.Equals("LOW - Supporting Services", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("LOW -", StringComparison.OrdinalIgnoreCase))
                     return kpi.TargetLow ?? kpi.TargetMedium ?? kpi.TargetHigh ?? "N/A";
-                return "N/A";
             }
             return kpi.TargetHigh ?? kpi.TargetMedium ?? kpi.TargetLow ?? "N/A";
         }
@@ -2937,6 +3009,23 @@ namespace DAMS.Infrastructure.Services
             public string Result { get; set; } = "";
             public string Target { get; set; } = "";
             public DateTime CreatedAt { get; set; }
+        }
+
+        /// <summary>Used only for CSV template generation. Columns: MinistryName, DepartmentName, CitizenImpactLevel (high/medium/low).</summary>
+        private sealed class AssetBulkUploadTemplateRow
+        {
+            public string MinistryName { get; set; } = "";
+            public string DepartmentName { get; set; } = "";
+            public string AssetName { get; set; } = "";
+            public string AssetUrl { get; set; } = "";
+            public string Description { get; set; } = "";
+            public string CitizenImpactLevel { get; set; } = "";
+            public string PrimaryContactName { get; set; } = "";
+            public string PrimaryContactEmail { get; set; } = "";
+            public string PrimaryContactPhone { get; set; } = "";
+            public string TechnicalContactName { get; set; } = "";
+            public string TechnicalContactEmail { get; set; } = "";
+            public string TechnicalContactPhone { get; set; } = "";
         }
     }
 }

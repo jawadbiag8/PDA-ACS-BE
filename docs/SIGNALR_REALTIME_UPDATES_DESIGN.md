@@ -5,8 +5,10 @@
 Allow users to see updated data **without manual refresh** for:
 
 1. **GET /api/AdminDashboard/summary**
-2. **GET /api/Incident/{id}** (e.g. `/api/Incident/816`)
-3. **GET /api/Asset/{id}/controlpanel** (e.g. `/api/Asset/241/controlpanel`)
+2. **GET /api/PMDashboard/header**
+3. **GET /api/Incident/{id}** (e.g. `/api/Incident/816`)
+4. **GET /api/Asset/{id}/controlpanel** (e.g. `/api/Asset/241/controlpanel`)
+5. **GET /api/KpisLov/manual-from-asset/{assetId}** (KPI/manual data for an asset)
 
 More endpoints may be added later, so the design should be **generic and extensible**.
 
@@ -45,8 +47,10 @@ More endpoints may be added later, so the design should be **generic and extensi
 | Topic pattern | Example | Corresponding REST endpoint |
 |---------------|---------|-----------------------------|
 | `AdminDashboard.Summary` | `AdminDashboard.Summary` | GET /api/AdminDashboard/summary |
+| `PMDashboard.Header` | `PMDashboard.Header` | GET /api/PMDashboard/header |
 | `Incident.{id}` | `Incident.816` | GET /api/Incident/816 |
-| `Asset.{id}.ControlPanel` | `Asset.241.ControlPanel` | GET /api/Asset/241/controlpanel |
+| `Asset.{assetId}.ControlPanel` | `Asset.241.ControlPanel` | GET /api/Asset/241/controlpanel |
+| `Asset.{assetId}.KpisLov` | `Asset.241.KpisLov` | GET /api/KpisLov/manual-from-asset/241?kpiId=X (per KPI) |
 
 Future examples: `Ministry.{id}.Report`, `Asset.{id}.DashboardHeader`, etc.
 
@@ -88,18 +92,15 @@ So: **REST stays as-is**; **add** SignalR + topic-based notifications and call t
 
 ## When to notify (trigger points)
 
-- **AdminDashboard.Summary**  
-  When anything that the dashboard summary depends on changes (e.g. assets, incidents, ministries). That can be many places; options:  
-  - Call notify from each relevant service method (Create/Update/Delete asset, incident, etc.), or  
-  - Introduce a small “domain event” or “data changed” pipeline that multiple services raise, and one handler calls the hub (more generic for future endpoints).
-
+- **AdminDashboard.Summary** and **PMDashboard.Header**  
+  When assets, incidents, or dashboard metrics change. Notified from: Asset create/update/delete/bulk-upload; Incident create/update/delete/add-comment. When the **external KPI scheduler** recalculates metrics (AssetMetrics, KPIsResults, etc.), it calls **POST /api/DataUpdate/notify-dashboards** so clients refetch both dashboards.  “domain event” or “data changed”
 - **Incident.{id}**  
-  When incident `id` is created/updated or a comment is added (e.g. in `IncidentService`: after Create, Update, AddComment, call notify for `Incident.{id}`).
+  When incident `id` is created/updated or a comment is added (in `IncidentService`: after Create, Update, AddComment, Delete). When the **external scheduler** creates or closes incidents, it calls **POST /api/DataUpdate/notify-incidents** (optionally with `incidentIds`).
 
-- **Asset.{id}.ControlPanel**  
-  When data that feeds the control panel for asset `id` changes (e.g. KPI results, asset record, or anything that affects control panel computation). Call notify from the relevant service(s) after save (e.g. `KPIsResultService`, or wherever control panel inputs are updated).
+- **Asset.{id}.ControlPanel** and **Asset.{id}.KpisLov**  
+  When data that feeds the control panel for asset `id` changes. Notified from: Asset update/delete (in backend). When the **KPI scheduler** or manual check updates KPI results for an asset, it calls **POST /api/Asset/{id}/controlpanel/notify** (which also notifies both dashboards).
 
-Adding a new endpoint later = define a new topic + add notify calls in the code paths that change that resource.
+Adding a new endpoint later = define a new topic + add notify calls in the code paths that change that resource (or expose a notify API for external systems).
 
 ---
 
@@ -148,13 +149,17 @@ This keeps the implementation generic and keeps all existing behaviour intact wh
 ## Implementation summary (done)
 
 - **Hub:** `DAMS.API/Hubs/DataUpdateHub.cs` – clients call `JoinTopic(topic)` / `LeaveTopic(topic)`; server sends `DataUpdated(topic)` to the group.
-- **Notifier:** `DAMS.API/Services/DataUpdateNotifier.cs` – implements `IDataUpdateNotifier`; used by services to call `NotifyTopicAsync(topic)`.
-- **Topics:** `DAMS.Application/DataUpdateTopics.cs` – constants and helpers: `AdminDashboardSummary`, `Incident(id)`, `AssetControlPanel(assetId)`.
+- **Notifier:** `DAMS.API/Services/DataUpdateNotifier.cs` – implements `IDataUpdateNotifier`; used by services and controllers to call `NotifyTopicAsync(topic)`.
+- **Topics:** `DAMS.Application/DataUpdateTopics.cs` – constants and helpers: `AdminDashboardSummary`, `PMDashboardHeader`, `Incident(id)`, `AssetControlPanel(assetId)`, `AssetKpisLov(assetId)`.
 - **Auth:** JWT is read from query string for paths under `/hubs` so SignalR connections can send `?access_token=...`.
-- **Triggers:**  
-  - **AdminDashboard.Summary:** Asset create/update/delete/bulk-upload; Incident create/delete.  
+- **Triggers (backend write paths):**  
+  - **AdminDashboard.Summary** and **PMDashboard.Header:** Asset create/update/delete/bulk-upload; Incident create/update/delete/add-comment.  
   - **Incident.{id}:** Incident create, update, add-comment, delete.  
-  - **Asset.{id}.ControlPanel:** Asset update, delete.
+  - **Asset.{id}.ControlPanel** and **Asset.{id}.KpisLov:** Asset update, delete; also when **POST /api/Asset/{id}/controlpanel/notify** is called.
+- **Notify endpoints (for external KPI scheduler):**  
+  - **POST /api/DataUpdate/notify-dashboards** – call after recalculating dashboard metrics (AssetMetrics, KPIsResults, etc.).  
+  - **POST /api/DataUpdate/notify-incidents** – call after creating or closing/updating incidents; optional body `{ "incidentIds": [ ... ] }`.  
+  - **POST /api/Asset/{id}/controlpanel/notify** – call after updating KPI results for an asset (e.g. manual check or scheduler); also notifies both dashboards.
 
 **Hub URL:** `{BaseUrl}/hubs/data-update` (e.g. `http://47.129.240.107:7008/hubs/data-update`).
 
@@ -163,19 +168,33 @@ This keeps the implementation generic and keeps all existing behaviour intact wh
 ## Frontend: how to use
 
 1. **Connect** to the hub with the same JWT (e.g. send as `access_token` query param or via `accessTokenFactory`).
-2. **On the page** that shows dashboard summary: call `connection.invoke("JoinTopic", "AdminDashboard.Summary")`.
-3. **On the page** that shows incident 816: call `connection.invoke("JoinTopic", "Incident.816")`.
-4. **On the page** that shows asset 241 control panel: call `connection.invoke("JoinTopic", "Asset.241.ControlPanel")`.
-5. **Listen** for `DataUpdated`: `connection.on("DataUpdated", (topic) => { /* refetch the REST API for that topic */ })`.
-6. **Refetch:** When you receive `DataUpdated(topic)`, call the corresponding REST endpoint and update the UI.
+2. **Join topics** for the pages you are on:
+   - Admin Dashboard summary page → `connection.invoke("JoinTopic", "AdminDashboard.Summary")`.
+   - PM Dashboard page → `connection.invoke("JoinTopic", "PMDashboard.Header")`.
+   - Incident detail (e.g. id 816) → `connection.invoke("JoinTopic", "Incident.816")`.
+   - Asset control panel (e.g. asset 241) → `connection.invoke("JoinTopic", "Asset.241.ControlPanel")` and optionally `"Asset.241.KpisLov"`.
+3. **Listen** for `DataUpdated`: `connection.on("DataUpdated", (topic) => { /* refetch the REST API for that topic */ })`.
+4. **Refetch:** When you receive `DataUpdated(topic)`, call the corresponding REST endpoint and update the UI.
+5. **Leave topic** when navigating away (optional): `connection.invoke("LeaveTopic", topic)`.
 
 **Topic → REST endpoint mapping:**
 
 | Topic | Refetch this endpoint |
 |-------|------------------------|
 | `AdminDashboard.Summary` | GET /api/AdminDashboard/summary |
-| `Incident.816` | GET /api/Incident/816 |
-| `Asset.241.ControlPanel` | GET /api/Asset/241/controlpanel |
+| `PMDashboard.Header` | GET /api/PMDashboard/header |
+| `Incident.{id}` | GET /api/Incident/{id} |
+| `Asset.{assetId}.ControlPanel` | GET /api/Asset/{assetId}/controlpanel |
+| `Asset.{assetId}.KpisLov` | GET /api/KpisLov/manual-from-asset/{assetId}?kpiId=X (per KPI as needed) |
+
+**Topics to join for testing (copy-paste):**
+
+- Dashboards only: `AdminDashboard.Summary`, `PMDashboard.Header`
+- One asset (e.g. 249): `Asset.249.ControlPanel`, `Asset.249.KpisLov`
+- One incident (e.g. 101): `Incident.101`
+- Full set (dashboards + one asset + one incident):  
+  `AdminDashboard.Summary`, `PMDashboard.Header`, `Asset.249.ControlPanel`, `Asset.249.KpisLov`, `Incident.101`  
+  (replace 249 and 101 with real IDs.)
 
 **Example (JavaScript/TypeScript):**
 
@@ -190,15 +209,19 @@ const connection = new signalR.HubConnectionBuilder()
 
 connection.on("DataUpdated", (topic) => {
   if (topic === "AdminDashboard.Summary") fetch("/api/AdminDashboard/summary").then(/* update UI */);
+  else if (topic === "PMDashboard.Header") fetch("/api/PMDashboard/header").then(/* update UI */);
   else if (topic.startsWith("Incident.")) fetch(`/api/Incident/${topic.split(".")[1]}`).then(/* update UI */);
   else if (topic.startsWith("Asset.")) {
     const parts = topic.split(".");
-    if (parts[2] === "ControlPanel") fetch(`/api/Asset/${parts[1]}/controlpanel`).then(/* update UI */);
+    const assetId = parts[1];
+    if (parts[2] === "ControlPanel") fetch(`/api/Asset/${assetId}/controlpanel`).then(/* update UI */);
+    else if (parts[2] === "KpisLov") { /* refetch manual-from-asset for assetId as needed */ }
   }
 });
 
 await connection.start();
 await connection.invoke("JoinTopic", "AdminDashboard.Summary");
+await connection.invoke("JoinTopic", "PMDashboard.Header");
 ```
 
 ---
@@ -218,8 +241,10 @@ You can test the hub **without** your real frontend using the included test page
 5. Click **2. Connect to hub** – the status should show “Connected”.
 6. Click **3. Join topic** (e.g. **AdminDashboard.Summary** or **Incident.816**).
 7. In another tab, open **Swagger** (e.g. https://localhost:7008/swagger/index.html) and trigger a change:
-   - Create/update/delete an asset → you should see **DataUpdated: AdminDashboard.Summary** (and **Asset.{id}.ControlPanel** if you joined that topic).
-   - Update incident 816 or add a comment → you should see **DataUpdated: Incident.816**.
+   - Create/update/delete an asset → you should see **DataUpdated: AdminDashboard.Summary**, **PMDashboard.Header**, and **Asset.{id}.ControlPanel** (if you joined that topic).
+   - Create/update/delete an incident or add a comment → you should see **DataUpdated: AdminDashboard.Summary**, **PMDashboard.Header**, and **Incident.{id}**.
+   - Call **POST /api/DataUpdate/notify-dashboards** → **AdminDashboard.Summary** and **PMDashboard.Header**.
+   - Call **POST /api/Asset/249/controlpanel/notify** → **Asset.249.ControlPanel**, **Asset.249.KpisLov**, and both dashboard topics.
 8. The test page log will show each **DataUpdated (topic)** as it arrives.
 
 If you open the file from `file://` or another domain, you may get CORS errors. Always use the URL above (same origin as the API).
@@ -250,3 +275,17 @@ document.head.appendChild(script);
 ### CORS
 
 To avoid CORS entirely, open the test page **from the API** (same origin): **https://localhost:7008/signalr-test-page.html**. The API serves this file from `wwwroot`. If you open the file from `file://` or another domain, you may get CORS errors; in that case use the URL above.
+
+---
+
+## Notify endpoints for external systems (KPI scheduler)
+
+When the **KPI scheduler** (or another external system) writes to the database, it should call one of these endpoints so SignalR clients refetch. All require the same JWT (e.g. service account).
+
+| Endpoint | When to call | Topics notified |
+|----------|--------------|------------------|
+| **POST /api/DataUpdate/notify-dashboards** | After recalculating and writing dashboard metrics (AssetMetrics, KPIsResults, KPIsResultHistories). | AdminDashboard.Summary, PMDashboard.Header |
+| **POST /api/DataUpdate/notify-incidents** | After creating or closing/updating incidents. Optional body: `{ "incidentIds": [101, 102] }` to also refresh incident detail pages. | AdminDashboard.Summary, PMDashboard.Header, and each Incident.{id} if incidentIds provided |
+| **POST /api/Asset/{id}/controlpanel/notify** | After updating KPI results for a single asset (e.g. manual check or scheduler run for that asset). | Asset.{id}.ControlPanel, Asset.{id}.KpisLov, AdminDashboard.Summary, PMDashboard.Header |
+
+See [API Documentation](./API_DOCUMENTATION.md) for the DataUpdate and Asset controller sections.

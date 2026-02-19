@@ -81,6 +81,7 @@ namespace DAMS.Infrastructure.Services
                     SecurityIndex = securityIndex,
                     IsOnline = isOnline,
                     MinistryId = asset.MinistryId,
+                    HasMetrics = metrics != null,
                     PreviousHealthIndex = (double)(previousMetric?.CurrentHealth ?? 0),
                     PreviousPerformanceIndex = previousMetric?.PerformanceIndex ?? 0.0,
                     PreviousComplianceIndex = previousMetric?.OverallComplianceMetric ?? 0.0
@@ -111,10 +112,10 @@ namespace DAMS.Infrastructure.Services
             var assetsOnline = assetMetricsList.Count(m => m.IsOnline);
             var digitalAssetsOffline = totalAssets - assetsOnline;
 
-            // Get last checked time (most recent KPI result timestamp)
+            // Get last checked time (most recent KPI result timestamp across all checks, not just failures)
             var lastChecked = await _context.KPIsResults
+                .Where(k => assetIds.Contains(k.AssetId))
                 .OrderByDescending(k => k.UpdatedAt)
-                .Where(x=>x.Target == "miss" && x.KpiId == 1)
                 .Select(k => k.UpdatedAt)
                 .FirstOrDefaultAsync();
 
@@ -169,8 +170,8 @@ namespace DAMS.Infrastructure.Services
                            i.UpdatedAt >= thirtyDaysAgoDate)
                 .CountAsync();
 
-            // Count vulnerable assets: total number of assets with SecurityIndex < 70 (from AssetMetrics)
-            var assetsAreVulnerable = assetMetricsList.Count(m => m.SecurityIndex < 70.0);
+            // Count vulnerable assets: only assets that have metrics and SecurityIndex < 70 (exclude assets with no metrics)
+            var assetsAreVulnerable = assetMetricsList.Count(m => m.HasMetrics && m.SecurityIndex < 70.0);
 
             var header = new PMDashboardHeaderDto
             {

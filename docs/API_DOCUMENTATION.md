@@ -60,6 +60,7 @@ No authentication required for login/logout.
 | GET | `/api/asset/{id}` | Get asset by ID. |
 | GET | `/api/asset/{id}/dashboard/header` | Dashboard header for asset. |
 | GET | `/api/asset/{id}/controlpanel` | Control panel data (KPIs, compliance from last 30 days). |
+| POST | `/api/asset/{id}/controlpanel/notify` | Notify clients that control panel (and dashboards) data for this asset has changed. Call after KPI scheduler or manual check updates KPIsResult/KPIsResultHistory. Refreshes control panel, KpisLov, Admin Dashboard summary, and PM Dashboard header. |
 | GET | `/api/asset/ministry/{ministryId}` | Assets for a ministry. Query: same as list. |
 | GET | `/api/asset/ministry/{ministryId}/summary` | Ministry assets summary. |
 | GET | `/api/asset/department/{departmentId}` | Assets for a department. |
@@ -197,6 +198,17 @@ No authentication required for login/logout.
 |--------|------|-------------|
 | GET | `/api/admindashboard` | Simple dashboard placeholder. |
 | GET | `/api/admindashboard/summary` | Dashboard summary (aggregate stats). |
+
+---
+
+### DataUpdate (`/api/dataupdate`)
+
+**Auth:** PDA Analyst, PMO Executive. Used by the **KPI scheduler** (or other external systems) after they write to the database, so SignalR clients can refetch.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/dataupdate/notify-dashboards` | Notify that dashboard metrics/calculations were updated (e.g. AssetMetrics, KPIsResults recalculated). Clients refetch Admin Dashboard summary and PM Dashboard header. |
+| POST | `/api/dataupdate/notify-incidents` | Notify that incidents were created or closed/updated. Clients refetch both dashboards. Optional body: `{ "incidentIds": [101, 102] }` to also notify specific incident pages. |
 
 ---
 
